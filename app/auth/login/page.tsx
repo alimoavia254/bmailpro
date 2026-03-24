@@ -12,8 +12,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { useEffect, useState } from 'react'
 
 function mapAuthError(input: unknown): string {
   const message =
@@ -32,14 +32,15 @@ export default function Page() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const successMessage = useMemo(() => {
-    if (searchParams.get('reset') === 'success') {
-      return 'Password updated. Please sign in with your new password.'
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('reset') === 'success') {
+      setSuccessMessage('Password updated. Please sign in with your new password.')
     }
-    return null
-  }, [searchParams])
+  }, [])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
