@@ -1,6 +1,11 @@
-import { createClient } from '@/lib/supabase/server'
+import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 import { triggerWebhooks } from '@/lib/webhooks'
+
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
 
 // 1×1 transparent JPEG pixel — shared constant to avoid duplication
 const TRACKING_PIXEL = Buffer.from([
@@ -50,10 +55,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const supabase = await createClient()
-
     // Get campaign contact by tracking ID
-    const { data: campaignContact } = await supabase
+    const { data: campaignContact } = await supabaseAdmin
       .from('campaign_contacts')
       .select('id, variant_id')
       .eq('tracking_id', trackingId)
@@ -67,7 +70,7 @@ export async function GET(request: NextRequest) {
         null
 
       // Log open event
-      await supabase.from('tracking_events').insert({
+      await supabaseAdmin.from('tracking_events').insert({
         campaign_contact_id: campaignContact.id,
         event_type: 'open',
         ip_address: ipAddress,
@@ -75,7 +78,7 @@ export async function GET(request: NextRequest) {
       })
 
       // Update campaign contact status
-      await supabase
+      await supabaseAdmin
         .from('campaign_contacts')
         .update({
           status: 'opened',
@@ -84,35 +87,35 @@ export async function GET(request: NextRequest) {
         .eq('id', campaignContact.id)
 
       // Get the campaign and update open count
-      const { data: contactData } = await supabase
+      const { data: contactData } = await supabaseAdmin
         .from('campaign_contacts')
         .select('campaign_id')
         .eq('id', campaignContact.id)
         .single()
 
       if (contactData) {
-        const { data: campaign } = await supabase
+        const { data: campaign } = await supabaseAdmin
           .from('campaigns')
           .select('opened_count, user_id')
           .eq('id', contactData.campaign_id)
           .single()
 
         if (campaign) {
-          await supabase
+          await supabaseAdmin
             .from('campaigns')
             .update({ opened_count: (campaign.opened_count || 0) + 1 })
             .eq('id', contactData.campaign_id)
 
           // Update variant stats if A/B test
           if (campaignContact.variant_id) {
-            const { data: variant } = await supabase
+            const { data: variant } = await supabaseAdmin
               .from('campaign_variants')
               .select('opened_count')
               .eq('id', campaignContact.variant_id)
               .single()
 
             if (variant) {
-              await supabase
+              await supabaseAdmin
                 .from('campaign_variants')
                 .update({ opened_count: (variant.opened_count || 0) + 1 })
                 .eq('id', campaignContact.variant_id)
