@@ -1,0 +1,309 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+import { createClient } from '@/lib/supabase/client'
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
+
+interface DashboardProps {
+  feedItems: any[]
+  onNavigate: (page: any, id?: string) => void
+  showToast: (msg: string, type?: any) => void
+}
+
+export default function Dashboard({ feedItems, onNavigate, showToast }: DashboardProps) {
+  const [stats, setStats] = useState({
+    totalCampaigns: 0,
+    totalSent: 0,
+    totalOpened: 0,
+    totalClicked: 0,
+    openRate: 0,
+    clickRate: 0,
+  })
+  const [campaigns, setCampaigns] = useState<any[]>([])
+  const [dailyData, setDailyData] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const supabase = createClient()
+
+  useEffect(() => {
+    loadDashboard()
+  }, [])
+
+  const loadDashboard = async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    // Get campaigns
+    const { data: campaignsData } = await supabase
+      .from('campaigns')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+
+    // Get all campaign contacts for stats
+    const { data: contactsData } = await supabase
+      .from('campaign_contacts')
+      .select('*, campaigns!inner(user_id)')
+      .eq('campaigns.user_id', user.id)
+
+    const totalSent = contactsData?.filter(c => c.status === 'sent' || c.status === 'opened' || c.status === 'clicked').length || 0
+    const totalOpened = contactsData?.filter(c => c.opened_at).length || 0
+    const totalClicked = contactsData?.filter(c => c.clicked_at).length || 0
+
+    setStats({
+      totalCampaigns: campaignsData?.length || 0,
+      totalSent,
+      totalOpened,
+      totalClicked,
+      openRate: totalSent > 0 ? Math.round((totalOpened / totalSent) * 100 * 10) / 10 : 0,
+      clickRate: totalSent > 0 ? Math.round((totalClicked / totalSent) * 100 * 10) / 10 : 0,
+    })
+
+    // Process campaigns with stats
+    const processedCampaigns = (campaignsData || []).map(camp => {
+      const campContacts = contactsData?.filter(c => c.campaign_id === camp.id) || []
+      const sent = campContacts.filter(c => ['sent', 'opened', 'clicked'].includes(c.status)).length
+      const opened = campContacts.filter(c => c.opened_at).length
+      const clicked = campContacts.filter(c => c.clicked_at).length
+      return {
+        ...camp,
+        total: campContacts.length,
+        sent,
+        opened,
+        clicked,
+        open_rate: sent > 0 ? Math.round((opened / sent) * 100 * 10) / 10 : 0,
+        click_rate: sent > 0 ? Math.round((clicked / sent) * 100 * 10) / 10 : 0,
+      }
+    })
+
+    setCampaigns(processedCampaigns.slice(0, 5))
+
+    // Generate daily data for chart (last 7 days)
+    const days = []
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date()
+      date.setDate(date.getDate() - i)
+      const dateStr = date.toISOString().split('T')[0]
+      const dayContacts = contactsData?.filter(c => c.sent_at?.startsWith(dateStr)) || []
+      days.push({
+        date: date.toLocaleDateString('en-US', { weekday: 'short' }),
+        sent: dayContacts.length,
+        opened: dayContacts.filter(c => c.opened_at).length,
+        clicked: dayContacts.filter(c => c.clicked_at).length,
+      })
+    }
+    setDailyData(days)
+    setLoading(false)
+  }
+
+  const pieData = [
+    { name: 'Opened', value: stats.totalOpened, color: 'var(--accent2)' },
+    { name: 'Clicked', value: stats.totalClicked, color: 'var(--purple)' },
+    { name: 'Unopened', value: Math.max(0, stats.totalSent - stats.totalOpened), color: 'var(--border)' },
+  ]
+
+  const statusPill = (status: string) => {
+    const pills: Record<string, string> = {
+      draft: '<span class="pill p-draft">📝 Draft</span>',
+      sending: '<span class="pill p-running">⚡ Sending</span>',
+      sent: '<span class="pill p-complete">✅ Complete</span>',
+      failed: '<span class="pill p-failed">❌ Failed</span>',
+    }
+    return pills[status] || `<span class="pill p-draft">${status}</span>`
+  }
+
+  if (loading) {
+    return (
+      <div className="text-center py-12 text-[var(--muted)]">
+        Loading dashboard...
+      </div>
+    )
+  }
+
+  return (
+    <>
+      {/* Stats Grid */}
+      <div className="stats-grid">
+        <div className="stat-card">
+          <div className="stat-label">📊 Campaigns</div>
+          <div className="stat-val text-[var(--accent)]">{stats.totalCampaigns}</div>
+          <div className="stat-sub">Total created</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">📤 Delivered</div>
+          <div className="stat-val text-[var(--accent)]">{stats.totalSent}</div>
+          <div className="stat-sub">Emails sent</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">👁️ Opened</div>
+          <div className="stat-val text-[var(--accent2)]">{stats.totalOpened}</div>
+          <div className="stat-sub">{stats.openRate}% open rate</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">🔗 Clicked</div>
+          <div className="stat-val text-[var(--purple)]">{stats.totalClicked}</div>
+          <div className="stat-sub">{stats.clickRate}% click rate</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">📈 Engagement</div>
+          <div className="stat-val text-[var(--accent2)]">{stats.openRate}%</div>
+          <div className="stat-sub">Avg. open rate</div>
+        </div>
+      </div>
+
+      {/* Charts Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
+        {/* Line Chart */}
+        <div className="bmail-card lg:col-span-2">
+          <div className="bmail-card-head">
+            <div className="bmail-card-title">📈 Last 7 Days Activity</div>
+          </div>
+          <div className="bmail-card-body" style={{ height: '240px' }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={dailyData}>
+                <defs>
+                  <linearGradient id="colorSent" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="var(--accent)" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="var(--accent)" stopOpacity={0}/>
+                  </linearGradient>
+                  <linearGradient id="colorOpened" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="var(--accent2)" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="var(--accent2)" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="date" tick={{ fontSize: 11, fill: 'var(--muted)' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: 'var(--muted)' }} axisLine={false} tickLine={false} />
+                <Tooltip 
+                  contentStyle={{ 
+                    background: 'var(--surface)', 
+                    border: '1px solid var(--border)',
+                    borderRadius: '8px',
+                    fontSize: '12px'
+                  }} 
+                />
+                <Area type="monotone" dataKey="sent" stroke="var(--accent)" fill="url(#colorSent)" strokeWidth={2} />
+                <Area type="monotone" dataKey="opened" stroke="var(--accent2)" fill="url(#colorOpened)" strokeWidth={2} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Pie Chart */}
+        <div className="bmail-card">
+          <div className="bmail-card-head">
+            <div className="bmail-card-title">🎯 Engagement</div>
+          </div>
+          <div className="bmail-card-body flex items-center justify-center" style={{ height: '240px' }}>
+            {stats.totalSent > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={pieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={50}
+                    outerRadius={80}
+                    paddingAngle={2}
+                    dataKey="value"
+                  >
+                    {pieData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="text-center text-[var(--muted)]">
+                <p>No data yet</p>
+                <p className="text-xs mt-1">Send your first campaign!</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Recent Campaigns */}
+        <div className="bmail-card">
+          <div className="bmail-card-head">
+            <div className="bmail-card-title">📧 Recent Campaigns</div>
+            <button 
+              className="btn-bmail btn-bmail-outline text-xs py-1 px-3"
+              onClick={() => onNavigate('campaigns')}
+            >
+              View All
+            </button>
+          </div>
+          <div className="bmail-card-body p-0">
+            {campaigns.length > 0 ? (
+              <table className="bmail-table">
+                <thead>
+                  <tr>
+                    <th>Campaign</th>
+                    <th>Status</th>
+                    <th>Sent</th>
+                    <th>Open Rate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {campaigns.map(c => (
+                    <tr key={c.id} className="cursor-pointer" onClick={() => onNavigate('detail', c.id)}>
+                      <td>
+                        <div className="font-semibold text-[13px]">{c.name}</div>
+                      </td>
+                      <td dangerouslySetInnerHTML={{ __html: statusPill(c.status) }} />
+                      <td>{c.sent}/{c.total}</td>
+                      <td>
+                        <span className={`font-bold ${c.open_rate > 30 ? 'text-[var(--accent2)]' : 'text-[var(--muted)]'}`}>
+                          {c.open_rate}%
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className="empty-state">
+                <div className="empty-icon">📧</div>
+                <h3 className="font-semibold mb-2">No campaigns yet</h3>
+                <p className="text-sm mb-4">Create your first email campaign</p>
+                <button 
+                  className="btn-bmail btn-bmail-primary"
+                  onClick={() => onNavigate('new')}
+                >
+                  + New Campaign
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Live Feed */}
+        <div className="bmail-card">
+          <div className="bmail-card-head">
+            <div className="bmail-card-title">⚡ Live Activity Feed</div>
+            <span className="text-xs text-[var(--muted)]">{feedItems.length} events</span>
+          </div>
+          <div className="bmail-card-body p-0 max-h-[300px] overflow-y-auto">
+            {feedItems.length > 0 ? (
+              feedItems.map(item => (
+                <div key={item.id} className="feed-item">
+                  <span className="feed-icon">{item.icon}</span>
+                  <div className="feed-text" dangerouslySetInnerHTML={{ __html: item.text }} />
+                  <span className="feed-time">{item.time}</span>
+                </div>
+              ))
+            ) : (
+              <div className="empty-state py-8">
+                <div className="empty-icon text-3xl">📡</div>
+                <p className="text-sm">Waiting for activity...</p>
+                <p className="text-xs mt-1">Opens and clicks will appear here in real-time</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
