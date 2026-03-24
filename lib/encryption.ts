@@ -46,3 +46,20 @@ export function decrypt(encryptedData: string): string {
         return encryptedData // Fallback
     }
 }
+
+function looksEncrypted(value: string): boolean {
+    return /^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i.test(value)
+}
+
+/**
+ * Handles both plaintext and encrypted secrets safely.
+ * Throws when the value appears encrypted but cannot be decrypted.
+ */
+export function resolveStoredSecret(value: string, label = 'secret'): string {
+    if (!value) return value
+    const decrypted = decrypt(value)
+    if (looksEncrypted(value) && decrypted === value) {
+        throw new Error(`${label}_decrypt_failed`)
+    }
+    return decrypted
+}

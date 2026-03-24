@@ -7,7 +7,7 @@ import {
   injectUnsubscribeLink,
   generateUnsubscribeToken,
 } from '@/lib/email'
-import { decrypt } from '@/lib/encryption'
+import { resolveStoredSecret } from '@/lib/encryption'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -68,8 +68,16 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Decrypt the stored password
-    const smtpPassword = decrypt(smtpPasswordRaw)
+    // Handle plaintext + encrypted passwords. Fail clearly if decrypt mismatch.
+    let smtpPassword: string
+    try {
+      smtpPassword = resolveStoredSecret(smtpPasswordRaw, 'smtp_password')
+    } catch {
+      return NextResponse.json(
+        { error: 'SMTP password could not be decrypted. Please re-save your SMTP App Password in Settings.' },
+        { status: 400 }
+      )
+    }
 
     // Get app settings
     const { data: settings } = await supabaseAdmin

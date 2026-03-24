@@ -3,7 +3,7 @@ import { Worker, Job } from 'bullmq'
 import { connection, CampaignJobData } from './queue'
 import { createClient as createSupabaseAdmin } from '@supabase/supabase-js'
 import { createTransporter, sendEmail, injectTracking, injectUnsubscribeLink, generateUnsubscribeToken } from './email'
-import { decrypt } from './encryption'
+import { resolveStoredSecret } from './encryption'
 import { Ratelimit } from '@upstash/ratelimit'
 import { Redis } from '@upstash/redis'
 import * as Sentry from "@sentry/nextjs";
@@ -47,7 +47,7 @@ const worker = new Worker<CampaignJobData>(
             const smtpPasswordRaw = activeSlot === 2 ? profile.smtp_password_2 : profile.smtp_password_1 || profile.smtp_password
             if (!smtpEmail || !smtpPasswordRaw) throw new Error('SMTP not configured')
 
-            const smtpPassword = decrypt(smtpPasswordRaw)
+            const smtpPassword = resolveStoredSecret(smtpPasswordRaw, 'smtp_password')
             const transporter = createTransporter(smtpEmail, smtpPassword)
 
             // 3. Prepare Email Body & Subject

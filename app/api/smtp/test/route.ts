@@ -1,4 +1,5 @@
 import { testSmtpConnection } from '@/lib/email'
+import { resolveStoredSecret } from '@/lib/encryption'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(req: NextRequest) {
@@ -12,7 +13,17 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const result = await testSmtpConnection(smtpEmail, smtpPassword)
+    let resolvedPassword = smtpPassword
+    try {
+      resolvedPassword = resolveStoredSecret(smtpPassword, 'smtp_password')
+    } catch {
+      return NextResponse.json(
+        { success: false, error: 'Saved SMTP password is unreadable. Please enter App Password again and save.' },
+        { status: 400 }
+      )
+    }
+
+    const result = await testSmtpConnection(smtpEmail, resolvedPassword)
 
     if (result.success) {
       return NextResponse.json({
