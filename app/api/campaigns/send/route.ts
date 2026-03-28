@@ -406,7 +406,6 @@ export async function POST(request: NextRequest) {
               status: 'sent',
               sent_at: new Date().toISOString(),
               tracking_id: trackingId,
-              email: recipientEmail,
               send_claim_expires_at: null,
             })
             .eq('id', recipient.id)
@@ -418,7 +417,6 @@ export async function POST(request: NextRequest) {
             .from('campaign_contacts')
             .update({
               status: 'failed',
-              email: recipientEmail,
               send_claim_expires_at: null,
             })
             .eq('id', recipient.id)
