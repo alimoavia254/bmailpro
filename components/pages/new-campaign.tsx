@@ -365,6 +365,7 @@ export default function NewCampaign({ onNavigate, showToast, profile, onShowUpgr
       const preset = getDeliveryPresetFromStorage()
       const sendResponse = await fetch('/api/campaigns/send', {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ campaignId: campaign.id, userId: user.id, maxRecipients: preset.batchSize }),
       })
