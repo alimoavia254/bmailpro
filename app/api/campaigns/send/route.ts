@@ -400,7 +400,7 @@ export async function POST(request: NextRequest) {
         )
 
         if (result.success) {
-          await supabaseAdmin
+          const { error: updateErr } = await supabaseAdmin
             .from('campaign_contacts')
             .update({
               status: 'sent',
@@ -409,6 +409,10 @@ export async function POST(request: NextRequest) {
               send_claim_expires_at: null,
             })
             .eq('id', recipient.id)
+
+          if (updateErr) {
+            console.error('campaign_contacts update failed:', updateErr.message, updateErr.details)
+          }
 
           sentCount++
         } else {
@@ -480,6 +484,7 @@ export async function POST(request: NextRequest) {
       pending: pendingCount,
       batchSize: recipientsToProcess.length,
       mode: maxBatchSize ? 'drip' : 'bulk',
+      _v: '20260328-fix2',
       message: `Successfully sent ${sentCount} email${sentCount !== 1 ? 's' : ''}${failedCount > 0 ? `, ${failedCount} failed` : ''
         }`,
     })
