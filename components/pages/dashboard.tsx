@@ -44,9 +44,11 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
     return Promise.race([promise, timeout]) as Promise<T>
   }
 
-  const loadDashboard = useCallback(async () => {
-    setLoading(true)
-    setLoadError(null)
+  const loadDashboard = useCallback(async (silent = false) => {
+    if (!silent) {
+      setLoading(true)
+      setLoadError(null)
+    }
 
     try {
       const user = await getCurrentUserSafe(supabase, 10000)
@@ -175,7 +177,7 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
       setCampaigns([])
       setDailyData([])
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [supabase])
 
@@ -185,7 +187,7 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
       if (debounce) clearTimeout(debounce)
       debounce = setTimeout(() => {
         debounce = null
-        void loadDashboard()
+        void loadDashboard(true)
       }, 350)
     }
 
@@ -214,8 +216,8 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
         })
 
       pollId = window.setInterval(() => {
-        if (document.visibilityState === 'visible') void loadDashboard()
-      }, 5000)
+        if (document.visibilityState === 'visible') void loadDashboard(true)
+      }, 12_000)
     }
 
     void setup()
@@ -245,7 +247,7 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
     return (
       <div className="text-center py-10">
         <p className="text-sm text-[var(--muted)] mb-4">{loadError}</p>
-        <button className="btn-bmail btn-bmail-outline" onClick={loadDashboard}>
+        <button className="btn-bmail btn-bmail-outline" onClick={() => void loadDashboard()}>
           Retry Dashboard
         </button>
       </div>

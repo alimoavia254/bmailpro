@@ -53,6 +53,7 @@ export default function AppShell({ user, profile }: AppShellProps) {
   const { toast } = useToast()
   const supabase = createClient()
   const dripOwnerRef = useRef(`drip:${Math.random().toString(36).slice(2)}`)
+  const dripBusyRef = useRef(false)
 
   // Create a simple showToast wrapper for backward compatibility
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -154,7 +155,10 @@ export default function AppShell({ user, profile }: AppShellProps) {
     return () => window.removeEventListener('popstate', onPop)
   }, [user, profile?.is_admin])
 
-  // Live feed: load recent opens/clicks, merge Realtime INSERTs, and poll so UI updates without manual refresh.
+  // Live feed: Realtime + light polling only on Dashboard (avoids global re-renders every few seconds).
+  const currentPageRef = useRef(currentPage)
+  currentPageRef.current = currentPage
+
   useEffect(() => {
     let pollTimer: number | null = null
     let channel: ReturnType<typeof supabase.channel> | null = null
@@ -183,6 +187,7 @@ export default function AppShell({ user, profile }: AppShellProps) {
           base.map((p: { eventId?: string }) => p.eventId).filter(Boolean) as string[]
         )
         const additions = rows.filter((r) => r.id && !seen.has(r.id)).map(mapRow)
+        if (!replace && additions.length === 0) return prev
         const merged = [...additions, ...base] as typeof base
         merged.sort(
           (a: { at: string }, b: { at: string }) =>
@@ -193,6 +198,7 @@ export default function AppShell({ user, profile }: AppShellProps) {
     }
 
     const fetchRecent = async () => {
+      if (currentPageRef.current !== 'dashboard') return
       const { data } = await supabase
         .from('tracking_events')
         .select('id, event_type, created_at')
@@ -244,7 +250,7 @@ export default function AppShell({ user, profile }: AppShellProps) {
 
       pollTimer = window.setInterval(() => {
         if (document.visibilityState === 'visible') void fetchRecent()
-      }, 5000)
+      }, 20_000)
     }
 
     void setup()
@@ -302,16 +308,17 @@ export default function AppShell({ user, profile }: AppShellProps) {
     }
   }, [supabase, toast])
 
-  // Anti-spam smart sender:
-  // Sends in paced batches (not all-at-once), while keeping delivery fast enough.
+  // Drip: interval must match delivery preset (was 5s → extra batches + duplicate sends).
+  // dripBusyRef blocks overlapping POSTs while SMTP is still sending.
   useEffect(() => {
     if (profile?.is_admin || !user?.id) return
 
     let active = true
+    let timeoutId: number | null = null
 
     const runDripTick = async () => {
-      if (!active) return
-
+      if (!active || dripBusyRef.current) return
+      dripBusyRef.current = true
       try {
         const now = Date.now()
         const lockKey = 'bmail:drip-lock'
@@ -323,7 +330,6 @@ export default function AppShell({ user, profile }: AppShellProps) {
         const dripIntervalMs = preset.intervalMs
         const dripBatchSize = preset.batchSize
 
-        // Prevent multi-tab duplicate sends: only one tab acts as sender.
         if (lock.owner && lock.owner !== currentOwner && typeof lock.ts === 'number' && now - lock.ts < dripIntervalMs - 5000) {
           return
         }
@@ -352,17 +358,37 @@ export default function AppShell({ user, profile }: AppShellProps) {
         })
       } catch (error) {
         console.error('Drip tick failed:', error)
+      } finally {
+        dripBusyRef.current = false
       }
     }
 
-    void runDripTick()
-    const timer = window.setInterval(() => {
-      void runDripTick()
-    }, 5_000)
+    const scheduleNext = () => {
+      if (!active) return
+      const preset = getDeliveryPresetFromStorage()
+      const gap = Math.max(10_000, preset.intervalMs)
+      timeoutId = window.setTimeout(() => {
+        void (async () => {
+          if (!active) return
+          await runDripTick()
+          if (!active) return
+          scheduleNext()
+        })()
+      }, gap)
+    }
+
+    timeoutId = window.setTimeout(() => {
+      void (async () => {
+        if (!active) return
+        await runDripTick()
+        if (!active) return
+        scheduleNext()
+      })()
+    }, 8_000)
 
     return () => {
       active = false
-      window.clearInterval(timer)
+      if (timeoutId) window.clearTimeout(timeoutId)
     }
   }, [profile?.is_admin, supabase, user?.id])
 

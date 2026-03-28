@@ -161,7 +161,7 @@ export default function CampaignDetail({ campaignId, onNavigate, showToast }: Ca
         }
       })
 
-    const pollMs = 4000
+    const pollMs = 8000
     const poll = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
         void loadCampaign(true)

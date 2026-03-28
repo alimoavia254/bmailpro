@@ -119,7 +119,7 @@ export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
 
       pollId = window.setInterval(() => {
         if (document.visibilityState === 'visible') void loadCampaigns()
-      }, 4000)
+      }, 8000)
     }
 
     void init()
