@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Sidebar from '@/components/sidebar'
 import Dashboard from '@/components/pages/dashboard'
 import Campaigns from '@/components/pages/campaigns'
+import ContactsDetail from '@/components/pages/contacts-detail'
 import NewCampaign from '@/components/pages/new-campaign'
 import Templates from '@/components/pages/templates'
 import Settings from '@/components/pages/settings'
@@ -20,13 +21,17 @@ import { Toaster } from '@/components/ui/toaster'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { MessageCircle, X } from 'lucide-react'
+import { getDeliveryPresetFromStorage } from '@/lib/delivery-speed'
 
-type Page = 'dashboard' | 'campaigns' | 'new' | 'templates' | 'settings' | 'detail' | 'upgrade' | 'admin-dashboard' | 'admin-users' | 'admin-payments' | 'admin-settings' | 'admin-activity'
+type Page = 'dashboard' | 'campaigns' | 'contacts' | 'new' | 'templates' | 'settings' | 'detail' | 'upgrade' | 'admin-dashboard' | 'admin-users' | 'admin-payments' | 'admin-settings' | 'admin-activity'
 
 interface AppShellProps {
   user: any
   profile: any
 }
+
+const IDLE_LOGOUT_MS = 30 * 60 * 1000
+const LAST_ACTIVE_KEY = 'bmail:last-active'
 
 export default function AppShell({ user, profile }: AppShellProps) {
   // Default to admin-dashboard if user is admin, otherwise dashboard
@@ -38,8 +43,10 @@ export default function AppShell({ user, profile }: AppShellProps) {
   const [feedItems, setFeedItems] = useState<any[]>([])
   const [showUpgradeModal, setShowUpgradeModal] = useState(false)
   const [appSettings, setAppSettings] = useState<any>(null)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const { toast } = useToast()
   const supabase = createClient()
+  const dripOwnerRef = useRef(`drip:${Math.random().toString(36).slice(2)}`)
 
   // Create a simple showToast wrapper for backward compatibility
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -60,7 +67,7 @@ export default function AppShell({ user, profile }: AppShellProps) {
 
         if (settings) {
           const settingsObj: any = {}
-          settings.forEach(s => {
+          settings.forEach((s: any) => {
             try {
               settingsObj[s.key] = typeof s.value === 'string' ? JSON.parse(s.value) : s.value
             } catch (e) {
@@ -122,7 +129,7 @@ export default function AppShell({ user, profile }: AppShellProps) {
           schema: 'public',
           table: 'tracking_events',
         },
-        (payload) => {
+        (payload: any) => {
           const event = payload.new
           const icon = event.event_type === 'open' ? '👁️' : '🔗'
           const text = event.event_type === 'open'
@@ -151,6 +158,7 @@ export default function AppShell({ user, profile }: AppShellProps) {
 
   const navigate = (page: Page, campaignId?: string) => {
     setCurrentPage(page)
+    setSidebarOpen(false)
     if (campaignId) {
       setSelectedCampaignId(campaignId)
     }
@@ -159,6 +167,99 @@ export default function AppShell({ user, profile }: AppShellProps) {
   const handleLogout = async () => {
     await supabase.auth.signOut()
   }
+
+  // Privacy: auto logout on inactivity and sync activity across tabs.
+  useEffect(() => {
+    const markActive = () => {
+      localStorage.setItem(LAST_ACTIVE_KEY, String(Date.now()))
+    }
+
+    const checkIdle = async () => {
+      const last = Number(localStorage.getItem(LAST_ACTIVE_KEY) || Date.now())
+      if (Date.now() - last > IDLE_LOGOUT_MS) {
+        await supabase.auth.signOut({ scope: 'local' })
+        toast({
+          title: 'Session expired for privacy',
+          description: 'You were logged out after inactivity.',
+        })
+      }
+    }
+
+    const events: Array<keyof WindowEventMap> = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart']
+    events.forEach((evt) => window.addEventListener(evt, markActive, { passive: true }))
+    markActive()
+    const timer = window.setInterval(() => {
+      void checkIdle()
+    }, 15000)
+
+    return () => {
+      events.forEach((evt) => window.removeEventListener(evt, markActive))
+      window.clearInterval(timer)
+    }
+  }, [supabase, toast])
+
+  // Anti-spam smart sender:
+  // Sends in paced batches (not all-at-once), while keeping delivery fast enough.
+  useEffect(() => {
+    if (profile?.is_admin || !user?.id) return
+
+    let active = true
+
+    const runDripTick = async () => {
+      if (!active) return
+
+      try {
+        const now = Date.now()
+        const lockKey = 'bmail:drip-lock'
+        const currentOwner = dripOwnerRef.current
+
+        const lockRaw = localStorage.getItem(lockKey)
+        const lock = lockRaw ? JSON.parse(lockRaw) as { owner?: string; ts?: number } : {}
+        const preset = getDeliveryPresetFromStorage()
+        const dripIntervalMs = preset.intervalMs
+        const dripBatchSize = preset.batchSize
+
+        // Prevent multi-tab duplicate sends: only one tab acts as sender.
+        if (lock.owner && lock.owner !== currentOwner && typeof lock.ts === 'number' && now - lock.ts < dripIntervalMs - 5000) {
+          return
+        }
+
+        localStorage.setItem(lockKey, JSON.stringify({ owner: currentOwner, ts: now }))
+
+        const { data: sendingCampaigns } = await supabase
+          .from('campaigns')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('status', 'sending')
+          .limit(1)
+
+        if (!sendingCampaigns || sendingCampaigns.length === 0) return
+
+        const campaign = sendingCampaigns[0]
+        await fetch('/api/campaigns/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            campaignId: campaign.id,
+            userId: user.id,
+            maxRecipients: dripBatchSize,
+          }),
+        })
+      } catch (error) {
+        console.error('Drip tick failed:', error)
+      }
+    }
+
+    void runDripTick()
+    const timer = window.setInterval(() => {
+      void runDripTick()
+    }, 10_000)
+
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [profile?.is_admin, supabase, user?.id])
 
   const openWhatsApp = () => {
     const whatsappNumber = appSettings?.whatsapp_number || '+923254139900'
@@ -203,6 +304,8 @@ export default function AppShell({ user, profile }: AppShellProps) {
             showToast={showToast}
           />
         )
+      case 'contacts':
+        return <ContactsDetail onNavigate={navigate} />
       case 'new':
         return (
           <NewCampaign
@@ -255,12 +358,28 @@ export default function AppShell({ user, profile }: AppShellProps) {
         onNavigate={navigate}
         onLogout={handleLogout}
         smtpStatus={smtpStatus}
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
       />
 
       <main className="main-content">
         {/* Top Bar */}
         <div className="topbar">
           <div className="flex items-center gap-3">
+            {/* Hamburger — mobile only */}
+            <button
+              className="sidebar-hamburger"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Open navigation menu"
+              aria-expanded={sidebarOpen}
+              aria-controls="main-nav"
+            >
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <rect y="3"  width="20" height="2" rx="1" fill="currentColor"/>
+                <rect y="9"  width="20" height="2" rx="1" fill="currentColor"/>
+                <rect y="15" width="20" height="2" rx="1" fill="currentColor"/>
+              </svg>
+            </button>
             <h1 className="page-title">
               {profile?.is_admin ? (
                 currentPage === 'admin-dashboard' && 'Admin Dashboard' ||
@@ -271,6 +390,7 @@ export default function AppShell({ user, profile }: AppShellProps) {
               ) : (
                 currentPage === 'dashboard' && 'Dashboard' ||
                 currentPage === 'campaigns' && 'Campaigns' ||
+                currentPage === 'contacts' && 'Contacts' ||
                 currentPage === 'new' && 'New Campaign' ||
                 currentPage === 'templates' && 'Templates' ||
                 currentPage === 'settings' && 'Settings' ||
@@ -285,9 +405,18 @@ export default function AppShell({ user, profile }: AppShellProps) {
               </div>
             )}
           </div>
-          <div className="text-sm text-[var(--muted)]">
+          <time
+            className="text-xs text-[var(--muted)] hidden sm:block whitespace-nowrap"
+            dateTime={new Date().toISOString().split('T')[0]}
+          >
             {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-          </div>
+          </time>
+          <time
+            className="text-xs text-[var(--muted)] block sm:hidden whitespace-nowrap"
+            dateTime={new Date().toISOString().split('T')[0]}
+          >
+            {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+          </time>
         </div>
 
         {/* Page Content */}

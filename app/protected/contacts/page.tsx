@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { createClient, getCurrentUserSafe } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -37,9 +37,7 @@ export default function ContactsPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser()
+        const user = await getCurrentUserSafe(supabase, 10000)
 
         if (!user) return
 
@@ -58,7 +56,7 @@ export default function ContactsPage() {
           .order('created_at', { ascending: false })
 
         if (contactsData) {
-          const formatted = contactsData.map(c => ({
+          const formatted = contactsData.map((c: any) => ({
             ...c,
             tags: c.contact_tags?.map((ct: any) => ct.tags).filter(Boolean) || []
           }))
@@ -72,7 +70,7 @@ export default function ContactsPage() {
     }
 
     fetchData()
-  }, [supabase])
+  }, [])
 
   const handleAddContact = async (e: React.FormEvent) => {
     e.preventDefault()

@@ -20,11 +20,7 @@ export interface SendEmailResult {
 }
 
 /**
- * Creates a real Gmail SMTP transporter using nodemailer.
- * Uses connection pooling for bulk email sending.
- *
- * IMPORTANT: Use Gmail App Password (not regular password):
- * Google Account → Security → 2-Step Verification → App Passwords → Generate
+ * Creates a Gmail SMTP transporter using an App Password.
  */
 export function createTransporter(
   smtpEmail: string,
@@ -33,19 +29,41 @@ export function createTransporter(
   return nodemailer.createTransport({
     host: 'smtp.gmail.com',
     port: 587,
-    secure: false, // use STARTTLS
+    secure: false,
     auth: {
       user: smtpEmail,
-      pass: smtpPassword, // Use Gmail App Password
+      pass: smtpPassword,
     },
     pool: true,
     maxConnections: 5,
     maxMessages: 100,
-    rateLimit: 3, // max messages per second
+    rateLimit: 3,
     tls: {
       rejectUnauthorized: true,
     },
   })
+}
+
+/**
+ * Creates a Gmail OAuth2 transporter using a refresh token.
+ * Used when the user connected their Gmail via "Connect with Google".
+ */
+export function createOAuthTransporter(
+  gmailEmail: string,
+  accessToken: string,
+  refreshToken: string
+): Transporter {
+  return nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      type: 'OAuth2',
+      user: gmailEmail,
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      refreshToken,
+      accessToken,
+    },
+  } as any)
 }
 
 /**

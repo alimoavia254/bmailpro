@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { createClient, getCurrentUserSafe } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import Link from 'next/link'
@@ -28,9 +28,7 @@ export default function CampaignsPage() {
   useEffect(() => {
     const fetchCampaigns = async () => {
       try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser()
+        const user = await getCurrentUserSafe(supabase, 10000)
 
         if (!user) return
 
@@ -51,7 +49,7 @@ export default function CampaignsPage() {
     }
 
     fetchCampaigns()
-  }, [supabase])
+  }, [])
 
   const handleDelete = async (campaignId: string) => {
     if (confirm('Are you sure you want to delete this campaign?')) {

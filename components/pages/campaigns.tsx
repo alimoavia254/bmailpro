@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect, type ReactElement } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { createClient, getCurrentUserSafe } from '@/lib/supabase/client'
+import { getDeliveryPresetFromStorage } from '@/lib/delivery-speed'
 
 interface CampaignsProps {
   onNavigate: (page: any, id?: string) => void
@@ -18,41 +19,68 @@ export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
   }, [])
 
   const loadCampaigns = async () => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-
-    const { data: campaignsData } = await supabase
-      .from('campaigns')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-
-    // Get contacts for each campaign
-    const { data: contactsData } = await supabase
-      .from('campaign_contacts')
-      .select('*, campaigns!inner(user_id)')
-      .eq('campaigns.user_id', user.id)
-
-    const processedCampaigns = (campaignsData || []).map(camp => {
-      const campContacts = contactsData?.filter(c => c.campaign_id === camp.id) || []
-      const sent = campContacts.filter(c => ['sent', 'opened', 'clicked'].includes(c.status)).length
-      const opened = campContacts.filter(c => c.opened_at).length
-      const clicked = campContacts.filter(c => c.clicked_at).length
-      const failed = campContacts.filter(c => c.status === 'failed').length
-      return {
-        ...camp,
-        total: campContacts.length,
-        sent,
-        opened,
-        clicked,
-        failed,
-        open_rate: sent > 0 ? Math.round((opened / sent) * 100 * 10) / 10 : 0,
-        click_rate: sent > 0 ? Math.round((clicked / sent) * 100 * 10) / 10 : 0,
+    try {
+      const user = await getCurrentUserSafe(supabase, 10000)
+      if (!user) {
+        setCampaigns([])
+        return
       }
-    })
 
-    setCampaigns(processedCampaigns)
-    setLoading(false)
+      const { data: campaignsData } = await supabase
+        .from('campaigns')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+
+      // Get contacts for each campaign
+      const { data: contactsData } = await supabase
+        .from('campaign_contacts')
+        .select('*, campaigns!inner(user_id)')
+        .eq('campaigns.user_id', user.id)
+
+      const processedCampaigns = (campaignsData || []).map((camp: any) => {
+        const campContacts = contactsData?.filter((c: any) => c.campaign_id === camp.id) || []
+        const sent = campContacts.filter((c: any) => ['sent', 'opened', 'clicked'].includes(c.status)).length
+        const opened = campContacts.filter((c: any) => c.opened_at).length
+        const clicked = campContacts.filter((c: any) => c.clicked_at).length
+        const failed = campContacts.filter((c: any) => c.status === 'failed').length
+        const pending = campContacts.filter((c: any) => c.status === 'pending').length
+        const derivedStatus =
+          camp.status === 'sending' && pending === 0
+            ? sent > 0
+              ? 'sent'
+              : failed > 0
+                ? 'failed'
+                : camp.status
+            : camp.status
+        return {
+          ...camp,
+          status_original: camp.status,
+          status: derivedStatus,
+          total: campContacts.length,
+          sent,
+          opened,
+          clicked,
+          failed,
+          open_rate: sent > 0 ? Math.round((opened / sent) * 100 * 10) / 10 : 0,
+          click_rate: sent > 0 ? Math.round((clicked / sent) * 100 * 10) / 10 : 0,
+        }
+      })
+
+      // Auto-heal old rows that got stuck on "sending" from previous buggy builds.
+      for (const c of processedCampaigns) {
+        if (c.status !== c.status_original) {
+          void supabase.from('campaigns').update({ status: c.status }).eq('id', c.id)
+        }
+      }
+
+      setCampaigns(processedCampaigns)
+    } catch (error) {
+      console.error('Failed to load campaigns:', error)
+      setCampaigns([])
+    } finally {
+      setLoading(false)
+    }
   }
 
   const sendCampaign = async (id: string) => {
@@ -64,10 +92,11 @@ export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
       return
     }
 
+    const preset = getDeliveryPresetFromStorage()
     const res = await fetch('/api/campaigns/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ campaignId: id, userId: user.id }),
+      body: JSON.stringify({ campaignId: id, userId: user.id, maxRecipients: preset.batchSize }),
     })
     const data = await res.json().catch(() => ({}))
 
@@ -76,7 +105,11 @@ export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
       return
     }
 
-    showToast(data?.message || 'Campaign sent', 'success')
+    if (data?.mode === 'drip') {
+      showToast(`Campaign started. ${preset.label} mode active (~${preset.approxPerMinute}/min).`, 'success')
+    } else {
+      showToast(data?.message || 'Campaign sent', 'success')
+    }
     loadCampaigns()
   }
 
@@ -87,6 +120,28 @@ export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
     await supabase.from('campaigns').delete().eq('id', id)
     
     showToast('🗑 Campaign deleted')
+    loadCampaigns()
+  }
+
+  const duplicateCampaign = async (id: string) => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      showToast('Not authenticated', 'error')
+      return
+    }
+
+    const res = await fetch('/api/campaigns/duplicate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ campaignId: id, userId: user.id }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      showToast(data?.error || 'Failed to duplicate campaign', 'error')
+      return
+    }
+
+    showToast(data?.message || 'Campaign duplicated', 'success')
     loadCampaigns()
   }
 
@@ -165,6 +220,12 @@ export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
                           onClick={() => onNavigate('detail', c.id)}
                         >
                           📊 Details
+                        </button>
+                        <button
+                          className="btn-bmail btn-bmail-outline text-xs py-1 px-2"
+                          onClick={() => duplicateCampaign(c.id)}
+                        >
+                          ⧉ Duplicate
                         </button>
                         {(c.status === 'draft' || c.status === 'sending' || c.status === 'failed') && (
                           <button 

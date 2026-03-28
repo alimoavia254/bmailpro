@@ -33,8 +33,8 @@ export async function GET(request: NextRequest) {
     const totalCampaigns = campaigns?.length || 0
     const sentCampaigns = campaigns?.filter(c => c.status === 'sent').length || 0
     const totalSent = campaigns?.reduce((sum, c) => sum + (c.sent_count || 0), 0) || 0
-    const totalOpens = campaigns?.reduce((sum, c) => sum + (c.open_count || 0), 0) || 0
-    const totalClicks = campaigns?.reduce((sum, c) => sum + (c.click_count || 0), 0) || 0
+    const totalOpens = campaigns?.reduce((sum, c) => sum + (c.opened_count || 0), 0) || 0
+    const totalClicks = campaigns?.reduce((sum, c) => sum + (c.clicked_count || 0), 0) || 0
 
     const openRate = totalSent > 0 ? Math.round((totalOpens / totalSent) * 100) : 0
     const clickRate = totalOpens > 0 ? Math.round((totalClicks / totalOpens) * 100) : 0
@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
     const freeDailyLimit = settingsMap.free_daily_limit || 5
 
     // Calculate remaining emails for free users
-    let remainingEmails = null
+    let remainingEmails: number | null = null
     if (profile?.subscription_status !== 'active') {
       const today = new Date().toISOString().split('T')[0]
       const lastEmailDate = profile?.last_email_date?.split('T')[0]

@@ -1,13 +1,24 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { createClient, getCurrentUserSafe } from '@/lib/supabase/client'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 
 interface DashboardProps {
   feedItems: any[]
   onNavigate: (page: any, id?: string) => void
   showToast: (msg: string, type?: any) => void
+}
+
+function StatusPill({ status }: { status: string }) {
+  const map: Record<string, { cls: string; label: string }> = {
+    draft:   { cls: 'p-draft',    label: '📝 Draft' },
+    sending: { cls: 'p-running',  label: '⚡ Sending' },
+    sent:    { cls: 'p-complete', label: '✅ Complete' },
+    failed:  { cls: 'p-failed',   label: '❌ Failed' },
+  }
+  const entry = map[status] ?? { cls: 'p-draft', label: status }
+  return <span className={`pill ${entry.cls}`}>{entry.label}</span>
 }
 
 export default function Dashboard({ feedItems, onNavigate, showToast }: DashboardProps) {
@@ -22,77 +33,129 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
   const [campaigns, setCampaigns] = useState<any[]>([])
   const [dailyData, setDailyData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const supabase = createClient()
+
+  const withTimeout = async <T,>(promise: Promise<T>, timeoutMs = 10000): Promise<T> => {
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('request_timeout')), timeoutMs)
+    )
+    return Promise.race([promise, timeout]) as Promise<T>
+  }
 
   useEffect(() => {
     loadDashboard()
   }, [])
 
   const loadDashboard = async () => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+    setLoading(true)
+    setLoadError(null)
 
-    // Get campaigns
-    const { data: campaignsData } = await supabase
-      .from('campaigns')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-
-    // Get all campaign contacts for stats
-    const { data: contactsData } = await supabase
-      .from('campaign_contacts')
-      .select('*, campaigns!inner(user_id)')
-      .eq('campaigns.user_id', user.id)
-
-    const totalSent = contactsData?.filter(c => c.status === 'sent' || c.status === 'opened' || c.status === 'clicked').length || 0
-    const totalOpened = contactsData?.filter(c => c.opened_at).length || 0
-    const totalClicked = contactsData?.filter(c => c.clicked_at).length || 0
-
-    setStats({
-      totalCampaigns: campaignsData?.length || 0,
-      totalSent,
-      totalOpened,
-      totalClicked,
-      openRate: totalSent > 0 ? Math.round((totalOpened / totalSent) * 100 * 10) / 10 : 0,
-      clickRate: totalSent > 0 ? Math.round((totalClicked / totalSent) * 100 * 10) / 10 : 0,
-    })
-
-    // Process campaigns with stats
-    const processedCampaigns = (campaignsData || []).map(camp => {
-      const campContacts = contactsData?.filter(c => c.campaign_id === camp.id) || []
-      const sent = campContacts.filter(c => ['sent', 'opened', 'clicked'].includes(c.status)).length
-      const opened = campContacts.filter(c => c.opened_at).length
-      const clicked = campContacts.filter(c => c.clicked_at).length
-      return {
-        ...camp,
-        total: campContacts.length,
-        sent,
-        opened,
-        clicked,
-        open_rate: sent > 0 ? Math.round((opened / sent) * 100 * 10) / 10 : 0,
-        click_rate: sent > 0 ? Math.round((clicked / sent) * 100 * 10) / 10 : 0,
+    try {
+      const user = await getCurrentUserSafe(supabase, 10000)
+      if (!user) {
+        setStats({
+          totalCampaigns: 0,
+          totalSent: 0,
+          totalOpened: 0,
+          totalClicked: 0,
+          openRate: 0,
+          clickRate: 0,
+        })
+        setCampaigns([])
+        setDailyData([])
+        return
       }
-    })
 
-    setCampaigns(processedCampaigns.slice(0, 5))
+      const campaignsResult = await withTimeout(
+        supabase
+          .from('campaigns')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false }),
+        10000
+      ) as any
+      const { data: campaignsData, error: campaignsError } = campaignsResult
+      if (campaignsError) throw campaignsError
 
-    // Generate daily data for chart (last 7 days)
-    const days = []
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date()
-      date.setDate(date.getDate() - i)
-      const dateStr = date.toISOString().split('T')[0]
-      const dayContacts = contactsData?.filter(c => c.sent_at?.startsWith(dateStr)) || []
-      days.push({
-        date: date.toLocaleDateString('en-US', { weekday: 'short' }),
-        sent: dayContacts.length,
-        opened: dayContacts.filter(c => c.opened_at).length,
-        clicked: dayContacts.filter(c => c.clicked_at).length,
+      const campaignIds = (campaignsData || []).map((c: any) => c.id)
+      let contactsData: any[] = []
+      if (campaignIds.length > 0) {
+        const contactsQueryResult = await withTimeout(
+          supabase
+            .from('campaign_contacts')
+            .select('campaign_id,status,opened_at,clicked_at,sent_at')
+            .in('campaign_id', campaignIds),
+          10000
+        ) as any
+        const { data: contactsResult, error: contactsError } = contactsQueryResult
+        if (contactsError) throw contactsError
+        contactsData = contactsResult || []
+      }
+
+      const totalSent = contactsData?.filter((c: any) => c.status === 'sent' || c.status === 'opened' || c.status === 'clicked').length || 0
+      const totalOpened = contactsData?.filter((c: any) => c.opened_at).length || 0
+      const totalClicked = contactsData?.filter((c: any) => c.clicked_at).length || 0
+
+      setStats({
+        totalCampaigns: campaignsData?.length || 0,
+        totalSent,
+        totalOpened,
+        totalClicked,
+        openRate: totalSent > 0 ? Math.round((totalOpened / totalSent) * 100 * 10) / 10 : 0,
+        clickRate: totalSent > 0 ? Math.round((totalClicked / totalSent) * 100 * 10) / 10 : 0,
       })
+
+      // Process campaigns with stats
+      const processedCampaigns = (campaignsData || []).map((camp: any) => {
+        const campContacts = contactsData.filter((c: any) => c.campaign_id === camp.id) || []
+        const sent = campContacts.filter((c: any) => ['sent', 'opened', 'clicked'].includes(c.status)).length
+        const opened = campContacts.filter((c: any) => c.opened_at).length
+        const clicked = campContacts.filter((c: any) => c.clicked_at).length
+        return {
+          ...camp,
+          total: campContacts.length,
+          sent,
+          opened,
+          clicked,
+          open_rate: sent > 0 ? Math.round((opened / sent) * 100 * 10) / 10 : 0,
+          click_rate: sent > 0 ? Math.round((clicked / sent) * 100 * 10) / 10 : 0,
+        }
+      })
+
+      setCampaigns(processedCampaigns.slice(0, 5))
+
+      // Generate daily data for chart (last 7 days)
+      const days: Array<{ date: string; sent: number; opened: number; clicked: number }> = []
+      for (let i = 6; i >= 0; i--) {
+        const date = new Date()
+        date.setDate(date.getDate() - i)
+        const dateStr = date.toISOString().split('T')[0]
+        const dayContacts = contactsData?.filter((c: any) => c.sent_at?.startsWith(dateStr)) || []
+        days.push({
+          date: date.toLocaleDateString('en-US', { weekday: 'short' }),
+          sent: dayContacts.length,
+          opened: dayContacts.filter((c: any) => c.opened_at).length,
+          clicked: dayContacts.filter((c: any) => c.clicked_at).length,
+        })
+      }
+      setDailyData(days)
+    } catch (error) {
+      console.error('Failed to load dashboard:', error)
+      setLoadError('Session sync issue detected. Please retry.')
+      setStats({
+        totalCampaigns: 0,
+        totalSent: 0,
+        totalOpened: 0,
+        totalClicked: 0,
+        openRate: 0,
+        clickRate: 0,
+      })
+      setCampaigns([])
+      setDailyData([])
+    } finally {
+      setLoading(false)
     }
-    setDailyData(days)
-    setLoading(false)
   }
 
   const pieData = [
@@ -101,20 +164,21 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
     { name: 'Unopened', value: Math.max(0, stats.totalSent - stats.totalOpened), color: 'var(--border)' },
   ]
 
-  const statusPill = (status: string) => {
-    const pills: Record<string, string> = {
-      draft: '<span class="pill p-draft">📝 Draft</span>',
-      sending: '<span class="pill p-running">⚡ Sending</span>',
-      sent: '<span class="pill p-complete">✅ Complete</span>',
-      failed: '<span class="pill p-failed">❌ Failed</span>',
-    }
-    return pills[status] || `<span class="pill p-draft">${status}</span>`
-  }
-
   if (loading) {
     return (
       <div className="text-center py-12 text-[var(--muted)]">
         Loading dashboard...
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className="text-center py-10">
+        <p className="text-sm text-[var(--muted)] mb-4">{loadError}</p>
+        <button className="btn-bmail btn-bmail-outline" onClick={loadDashboard}>
+          Retry Dashboard
+        </button>
       </div>
     )
   }
@@ -237,6 +301,7 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
           </div>
           <div className="bmail-card-body p-0">
             {campaigns.length > 0 ? (
+              <div className="bmail-table-wrap">
               <table className="bmail-table">
                 <thead>
                   <tr>
@@ -252,7 +317,9 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
                       <td>
                         <div className="font-semibold text-[13px]">{c.name}</div>
                       </td>
-                      <td dangerouslySetInnerHTML={{ __html: statusPill(c.status) }} />
+                      <td>
+                        <StatusPill status={c.status} />
+                      </td>
                       <td>{c.sent}/{c.total}</td>
                       <td>
                         <span className={`font-bold ${c.open_rate > 30 ? 'text-[var(--accent2)]' : 'text-[var(--muted)]'}`}>
@@ -263,6 +330,7 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
                   ))}
                 </tbody>
               </table>
+              </div>
             ) : (
               <div className="empty-state">
                 <div className="empty-icon">📧</div>
@@ -290,7 +358,7 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
               feedItems.map(item => (
                 <div key={item.id} className="feed-item">
                   <span className="feed-icon">{item.icon}</span>
-                  <div className="feed-text" dangerouslySetInnerHTML={{ __html: item.text }} />
+                  <div className="feed-text">{item.text}</div>
                   <span className="feed-time">{item.time}</span>
                 </div>
               ))

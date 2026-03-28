@@ -46,6 +46,33 @@ const PIXEL_RESPONSE = new NextResponse(TRACKING_PIXEL, {
   },
 })
 
+const MIN_OPEN_DELAY_MS = 45_000
+
+function isLikelyAutomatedOpen(request: NextRequest): boolean {
+  const userAgent = (request.headers.get('user-agent') || '').toLowerCase()
+  const purpose = (request.headers.get('purpose') || request.headers.get('x-purpose') || '').toLowerCase()
+  const secPurpose = (request.headers.get('sec-purpose') || '').toLowerCase()
+
+  if (purpose.includes('prefetch') || secPurpose.includes('prefetch') || secPurpose.includes('prerender')) {
+    return true
+  }
+
+  const scannerSignatures = [
+    'proofpoint',
+    'barracuda',
+    'symantec',
+    'mimecast',
+    'trendmicro',
+    'mailguard',
+    'safelinks',
+    'crawler',
+    'spider',
+    'bot/',
+  ]
+
+  return scannerSignatures.some((sig) => userAgent.includes(sig))
+}
+
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
   const trackingId = searchParams.get('tid') // Bug #3 fixed: was 'id', now 'tid'
@@ -58,11 +85,33 @@ export async function GET(request: NextRequest) {
     // Get campaign contact by tracking ID
     const { data: campaignContact } = await supabaseAdmin
       .from('campaign_contacts')
-      .select('id, variant_id')
+      .select('id, campaign_id, variant_id, opened_at, sent_at')
       .eq('tracking_id', trackingId)
       .single()
 
     if (campaignContact) {
+      // Ignore automated scanners and prefetchers to avoid false opens.
+      if (isLikelyAutomatedOpen(request)) {
+        return PIXEL_RESPONSE
+      }
+
+      // Ignore suspiciously fast opens immediately after send (scanner behavior).
+      // Also block if sent_at is null — race condition where the DB update hasn't
+      // completed yet but the recipient's mail server scanner already fetched the pixel.
+      if (!campaignContact.sent_at) {
+        return PIXEL_RESPONSE
+      }
+      const sentAt = new Date(campaignContact.sent_at).getTime()
+      const now = Date.now()
+      if (Number.isFinite(sentAt) && now - sentAt < MIN_OPEN_DELAY_MS) {
+        return PIXEL_RESPONSE
+      }
+
+      // Idempotent: only count first open for each recipient.
+      if (campaignContact.opened_at) {
+        return PIXEL_RESPONSE
+      }
+
       // Resolve IP address — request.ip is deprecated in Next.js 15
       const ipAddress =
         request.headers.get('x-forwarded-for')?.split(',')[0].trim() ??
@@ -86,50 +135,41 @@ export async function GET(request: NextRequest) {
         })
         .eq('id', campaignContact.id)
 
-      // Get the campaign and update open count
-      const { data: contactData } = await supabaseAdmin
-        .from('campaign_contacts')
-        .select('campaign_id')
-        .eq('id', campaignContact.id)
+      const { data: campaign } = await supabaseAdmin
+        .from('campaigns')
+        .select('opened_count, user_id')
+        .eq('id', campaignContact.campaign_id)
         .single()
 
-      if (contactData) {
-        const { data: campaign } = await supabaseAdmin
+      if (campaign) {
+        await supabaseAdmin
           .from('campaigns')
-          .select('opened_count, user_id')
-          .eq('id', contactData.campaign_id)
-          .single()
+          .update({ opened_count: (campaign.opened_count || 0) + 1 })
+          .eq('id', campaignContact.campaign_id)
 
-        if (campaign) {
-          await supabaseAdmin
-            .from('campaigns')
-            .update({ opened_count: (campaign.opened_count || 0) + 1 })
-            .eq('id', contactData.campaign_id)
+        // Update variant stats if A/B test
+        if (campaignContact.variant_id) {
+          const { data: variant } = await supabaseAdmin
+            .from('campaign_variants')
+            .select('opened_count')
+            .eq('id', campaignContact.variant_id)
+            .single()
 
-          // Update variant stats if A/B test
-          if (campaignContact.variant_id) {
-            const { data: variant } = await supabaseAdmin
+          if (variant) {
+            await supabaseAdmin
               .from('campaign_variants')
-              .select('opened_count')
+              .update({ opened_count: (variant.opened_count || 0) + 1 })
               .eq('id', campaignContact.variant_id)
-              .single()
-
-            if (variant) {
-              await supabaseAdmin
-                .from('campaign_variants')
-                .update({ opened_count: (variant.opened_count || 0) + 1 })
-                .eq('id', campaignContact.variant_id)
-            }
           }
-
-          // Trigger Webhooks
-          await triggerWebhooks(campaign.user_id, 'open', {
-            campaign_id: contactData.campaign_id,
-            tracking_id: trackingId,
-            ip_address: ipAddress,
-            user_agent: request.headers.get('user-agent')
-          })
         }
+
+        // Trigger Webhooks
+        await triggerWebhooks(campaign.user_id, 'open', {
+          campaign_id: campaignContact.campaign_id,
+          tracking_id: trackingId,
+          ip_address: ipAddress,
+          user_agent: request.headers.get('user-agent')
+        })
       }
     }
   } catch (error) {

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { createClient, getCurrentUserSafe } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -72,9 +72,7 @@ export default function SettingsPage() {
   useEffect(() => {
     const fetchProfile = async () => {
       try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser()
+        const user = await getCurrentUserSafe(supabase, 10000)
 
         if (!user) return
 
@@ -111,7 +109,7 @@ export default function SettingsPage() {
     }
 
     fetchProfile()
-  }, [supabase])
+  }, [])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target

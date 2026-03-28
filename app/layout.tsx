@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { DM_Sans, DM_Mono, Syne } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import { ThemeProvider } from '@/components/theme-provider'
@@ -20,6 +20,13 @@ const syne = Syne({
   weight: ['400', '600', '700', '800'],
   variable: '--font-syne',
 })
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  minimumScale: 1,
+  maximumScale: 5,
+}
 
 export const metadata: Metadata = {
   title: 'BmailPro - Professional Email Tracking Platform',

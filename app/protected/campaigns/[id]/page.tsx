@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { createClient, getCurrentUserSafe } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -63,9 +63,7 @@ export default function CampaignDetailPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser()
+        const user = await getCurrentUserSafe(supabase, 10000)
 
         if (!user) return
 
@@ -116,7 +114,7 @@ export default function CampaignDetailPage() {
     }
 
     fetchData()
-  }, [campaignId, supabase])
+  }, [campaignId])
 
   const handleAddContact = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -172,24 +170,36 @@ export default function CampaignDetailPage() {
 
     setSending(true)
     try {
-      // Update campaign status
-      await supabase
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+
+      if (!user) {
+        alert('Please login again to send campaign')
+        return
+      }
+
+      const response = await fetch('/api/campaigns/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ campaignId: campaign.id, userId: user.id }),
+      })
+
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        alert(result?.error || 'Failed to send campaign')
+        return
+      }
+
+      // Refresh fresh stats from DB after real sending.
+      const { data: refreshedCampaign } = await supabase
         .from('campaigns')
-        .update({
-          status: 'sent',
-          sent_count: contacts.length,
-          total_recipients: contacts.length,
-        })
+        .select('*')
         .eq('id', campaign.id)
+        .single()
 
-      // Update campaign contacts to sent
-      await supabase
-        .from('campaign_contacts')
-        .update({ status: 'sent', sent_at: new Date().toISOString() })
-        .eq('campaign_id', campaign.id)
-
-      setCampaign({ ...campaign, status: 'sent', sent_count: contacts.length })
-      alert('Campaign sent successfully!')
+      if (refreshedCampaign) setCampaign(refreshedCampaign)
+      alert(result?.message || 'Campaign sent successfully!')
     } catch (error) {
       console.error('Error sending campaign:', error)
       alert('Failed to send campaign')

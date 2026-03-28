@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { createClient, getCurrentUserSafe } from '@/lib/supabase/client'
 import { MessageCircle } from 'lucide-react'
+import { getDeliveryPresetFromStorage } from '@/lib/delivery-speed'
 
 interface NewCampaignProps {
   onNavigate: (page: any, id?: string) => void
@@ -12,8 +13,10 @@ interface NewCampaignProps {
 }
 
 interface Contact {
+  id?: string
   email: string
   name: string
+  is_unsubscribed?: boolean
 }
 
 interface AppSettings {
@@ -33,6 +36,9 @@ export default function NewCampaign({ onNavigate, showToast, profile, onShowUpgr
   const [pasteText, setPasteText] = useState('')
   const [csvMsg, setCsvMsg] = useState('')
   const [loading, setLoading] = useState(false)
+  const [savedContacts, setSavedContacts] = useState<Contact[]>([])
+  const [savedSearch, setSavedSearch] = useState('')
+  const [selectedSavedEmails, setSelectedSavedEmails] = useState<Record<string, boolean>>({})
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
   const [showLimitWarning, setShowLimitWarning] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -77,6 +83,29 @@ export default function NewCampaign({ onNavigate, showToast, profile, onShowUpgr
     fetchSettings()
   }, [supabase])
 
+  // Load previously saved unique contacts so user can reuse anytime.
+  useEffect(() => {
+    const loadSavedContacts = async () => {
+      const user = await getCurrentUserSafe(supabase, 8000)
+      if (!user) return
+
+      const { data } = await supabase
+        .from('contacts')
+        .select('id, email, name, is_unsubscribed')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+
+      setSavedContacts((data || []).map((c: any) => ({
+        id: c.id,
+        email: c.email,
+        name: c.name || '',
+        is_unsubscribed: c.is_unsubscribed || false,
+      })))
+    }
+
+    void loadSavedContacts()
+  }, [supabase])
+
   // Check if user has exceeded free limit
   const isFreeUser = profile?.subscription_status === 'free' || !profile?.subscription_status
   const emailsSentToday = profile?.daily_emails_sent || 0
@@ -99,6 +128,71 @@ export default function NewCampaign({ onNavigate, showToast, profile, onShowUpgr
 
   const removeContact = (email: string) => {
     setContacts(contacts.filter(c => c.email !== email))
+  }
+
+  const addSavedContactToCampaign = (saved: Contact) => {
+    if (!saved.email.includes('@')) return
+    if (saved.is_unsubscribed) {
+      showToast('This contact is unsubscribed and cannot be added.', 'error')
+      return
+    }
+
+    const emailLower = saved.email.toLowerCase()
+    if (contacts.some(c => c.email.toLowerCase() === emailLower)) {
+      showToast('Already added')
+      return
+    }
+
+    setContacts(prev => [...prev, { email: saved.email, name: saved.name || '' }])
+  }
+
+  const visibleSavedContacts = savedContacts.filter((c) => {
+    const q = savedSearch.trim().toLowerCase()
+    if (!q) return true
+    return c.email.toLowerCase().includes(q) || (c.name || '').toLowerCase().includes(q)
+  })
+
+  const toggleSavedSelection = (email: string) => {
+    setSelectedSavedEmails((prev) => ({ ...prev, [email]: !prev[email] }))
+  }
+
+  const selectAllVisibleSaved = (checked: boolean) => {
+    const next = { ...selectedSavedEmails }
+    visibleSavedContacts.forEach((c) => {
+      next[c.email] = checked
+    })
+    setSelectedSavedEmails(next)
+  }
+
+  const addSelectedSavedToCampaign = () => {
+    const selected = visibleSavedContacts.filter((c) => selectedSavedEmails[c.email])
+    if (selected.length === 0) {
+      showToast('No saved contacts selected')
+      return
+    }
+
+    let added = 0
+    let skipped = 0
+    const existing = new Set(contacts.map((c) => c.email.toLowerCase()))
+    const nextContacts = [...contacts]
+
+    for (const c of selected) {
+      const emailLower = c.email.toLowerCase()
+      if (c.is_unsubscribed) {
+        skipped++
+        continue
+      }
+      if (existing.has(emailLower)) {
+        skipped++
+        continue
+      }
+      nextContacts.push({ email: c.email, name: c.name || '' })
+      existing.add(emailLower)
+      added++
+    }
+
+    setContacts(nextContacts)
+    showToast(`${added} contact(s) added${skipped > 0 ? `, ${skipped} skipped` : ''}`)
   }
 
   const loadCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -265,10 +359,11 @@ export default function NewCampaign({ onNavigate, showToast, profile, onShowUpgr
     showToast(`Campaign created with ${linkedRecipients} recipient(s)`)
     
     if (confirm(`Campaign "${name}" created with ${linkedRecipients} recipient(s).\n\nSend now?`)) {
+      const preset = getDeliveryPresetFromStorage()
       const sendResponse = await fetch('/api/campaigns/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ campaignId: campaign.id, userId: user.id }),
+        body: JSON.stringify({ campaignId: campaign.id, userId: user.id, maxRecipients: preset.batchSize }),
       })
       const sendData = await sendResponse.json().catch(() => ({}))
 
@@ -394,6 +489,63 @@ export default function NewCampaign({ onNavigate, showToast, profile, onShowUpgr
               {/* Manual */}
               {activeTab === 'manual' && (
                 <div>
+                  <div className="mb-3 rounded-md border border-[var(--border)] p-3">
+                    <div className="text-xs font-semibold text-[var(--muted)] mb-2">Use Saved Contacts</div>
+                    <input
+                      className="form-input mb-2"
+                      placeholder="Search saved contacts..."
+                      value={savedSearch}
+                      onChange={(e) => setSavedSearch(e.target.value)}
+                    />
+                    <div className="flex items-center gap-2 mb-2">
+                      <label className="text-xs flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={
+                            visibleSavedContacts.length > 0 &&
+                            visibleSavedContacts.every((c) => !!selectedSavedEmails[c.email])
+                          }
+                          onChange={(e) => selectAllVisibleSaved(e.target.checked)}
+                        />
+                        Select all visible
+                      </label>
+                      <button
+                        type="button"
+                        className="btn-bmail btn-bmail-outline text-xs py-1 px-2"
+                        onClick={addSelectedSavedToCampaign}
+                      >
+                        Add selected
+                      </button>
+                    </div>
+                    <div className="max-h-[180px] overflow-y-auto space-y-1">
+                      {visibleSavedContacts
+                        .slice(0, 100)
+                        .map((c) => (
+                          <div
+                            key={c.id || c.email}
+                            className="w-full text-left px-2 py-2 rounded border border-transparent hover:border-[var(--border)] hover:bg-[var(--paper)] flex items-center gap-2"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={!!selectedSavedEmails[c.email]}
+                              onChange={() => toggleSavedSelection(c.email)}
+                            />
+                            <button
+                              type="button"
+                              className="flex-1 text-left"
+                              onClick={() => addSavedContactToCampaign(c)}
+                            >
+                              <div className="text-sm font-medium">{c.name || c.email}</div>
+                              <div className="text-xs text-[var(--muted)]">{c.email}</div>
+                            </button>
+                          </div>
+                        ))}
+                      {savedContacts.length === 0 && (
+                        <div className="text-xs text-[var(--muted)]">No saved contacts yet.</div>
+                      )}
+                    </div>
+                  </div>
+
                   <div className="flex gap-2 mb-3">
                     <input 
                       className="form-input"

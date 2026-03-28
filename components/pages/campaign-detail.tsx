@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useEffect, type ReactElement } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { createClient, getCurrentUserSafe } from '@/lib/supabase/client'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
+import { getDeliveryPresetFromStorage } from '@/lib/delivery-speed'
 
 interface CampaignDetailProps {
   campaignId: string
@@ -21,43 +22,77 @@ export default function CampaignDetail({ campaignId, onNavigate, showToast }: Ca
   }, [campaignId])
 
   const loadCampaign = async () => {
-    // Get campaign
-    const { data: campaignData } = await supabase
-      .from('campaigns')
-      .select('*')
-      .eq('id', campaignId)
-      .single()
+    setLoading(true)
+    try {
+      const user = await getCurrentUserSafe(supabase, 10000)
+      if (!user) {
+        showToast('Session expired. Please login again.', 'error')
+        onNavigate('dashboard')
+        return
+      }
 
-    if (!campaignData) {
-      showToast('Campaign not found')
-      onNavigate('campaigns')
-      return
+      // Get campaign
+      const { data: campaignData } = await supabase
+        .from('campaigns')
+        .select('*')
+        .eq('id', campaignId)
+        .single()
+
+      if (!campaignData) {
+        showToast('Campaign not found')
+        onNavigate('campaigns')
+        return
+      }
+
+      // Get contacts
+      const { data: contactsData } = await supabase
+        .from('campaign_contacts')
+        .select('*, contacts(email, name)')
+        .eq('campaign_id', campaignId)
+        .order('sent_at', { ascending: false })
+
+      const normalizedContacts = (contactsData || []).map((c: any) => ({
+        ...c,
+        display_email: c.email || c.contacts?.email || '',
+        display_name: c.contacts?.name || '',
+      }))
+
+      const sent = normalizedContacts.filter((c: any) => ['sent', 'opened', 'clicked'].includes(c.status)).length || 0
+      const opened = normalizedContacts.filter((c: any) => c.opened_at).length || 0
+      const clicked = normalizedContacts.filter((c: any) => c.clicked_at).length || 0
+      const failed = normalizedContacts.filter((c: any) => c.status === 'failed').length || 0
+      const pending = normalizedContacts.filter((c: any) => c.status === 'pending').length || 0
+      const derivedStatus =
+        campaignData.status === 'sending' && pending === 0
+          ? sent > 0
+            ? 'sent'
+            : failed > 0
+              ? 'failed'
+              : campaignData.status
+          : campaignData.status
+
+      if (derivedStatus !== campaignData.status) {
+        void supabase.from('campaigns').update({ status: derivedStatus }).eq('id', campaignId)
+      }
+
+      setCampaign({
+        ...campaignData,
+        status: derivedStatus,
+        total: normalizedContacts.length || 0,
+        sent,
+        opened,
+        clicked,
+        failed,
+        open_rate: sent > 0 ? Math.round((opened / sent) * 100 * 10) / 10 : 0,
+        click_rate: sent > 0 ? Math.round((clicked / sent) * 100 * 10) / 10 : 0,
+      })
+      setContacts(normalizedContacts)
+    } catch (error) {
+      console.error('Failed to load campaign detail:', error)
+      showToast('Failed to load campaign details', 'error')
+    } finally {
+      setLoading(false)
     }
-
-    // Get contacts
-    const { data: contactsData } = await supabase
-      .from('campaign_contacts')
-      .select('*')
-      .eq('campaign_id', campaignId)
-      .order('sent_at', { ascending: false })
-
-    const sent = contactsData?.filter(c => ['sent', 'opened', 'clicked'].includes(c.status)).length || 0
-    const opened = contactsData?.filter(c => c.opened_at).length || 0
-    const clicked = contactsData?.filter(c => c.clicked_at).length || 0
-    const failed = contactsData?.filter(c => c.status === 'failed').length || 0
-
-    setCampaign({
-      ...campaignData,
-      total: contactsData?.length || 0,
-      sent,
-      opened,
-      clicked,
-      failed,
-      open_rate: sent > 0 ? Math.round((opened / sent) * 100 * 10) / 10 : 0,
-      click_rate: sent > 0 ? Math.round((clicked / sent) * 100 * 10) / 10 : 0,
-    })
-    setContacts(contactsData || [])
-    setLoading(false)
   }
 
   const sendCampaign = async () => {
@@ -69,10 +104,11 @@ export default function CampaignDetail({ campaignId, onNavigate, showToast }: Ca
       return
     }
 
+    const preset = getDeliveryPresetFromStorage()
     const res = await fetch('/api/campaigns/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ campaignId, userId: user.id }),
+      body: JSON.stringify({ campaignId, userId: user.id, maxRecipients: preset.batchSize }),
     })
     const data = await res.json().catch(() => ({}))
 
@@ -81,7 +117,11 @@ export default function CampaignDetail({ campaignId, onNavigate, showToast }: Ca
       return
     }
 
-    showToast(data?.message || 'Campaign sent', 'success')
+    if (data?.mode === 'drip') {
+      showToast(`Campaign started. ${preset.label} mode active (~${preset.approxPerMinute}/min).`, 'success')
+    } else {
+      showToast(data?.message || 'Campaign sent', 'success')
+    }
     await supabase
       .from('campaigns')
       .update({ status: data.failed > 0 && data.sent > 0 ? 'sent' : data.sent > 0 ? 'sent' : 'failed' })
@@ -98,10 +138,11 @@ export default function CampaignDetail({ campaignId, onNavigate, showToast }: Ca
       return
     }
 
+    const preset = getDeliveryPresetFromStorage()
     const res = await fetch('/api/campaigns/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ campaignId, userId: user.id, includeFailed: true }),
+      body: JSON.stringify({ campaignId, userId: user.id, includeFailed: true, maxRecipients: preset.batchSize }),
     })
     const data = await res.json().catch(() => ({}))
 
@@ -112,6 +153,27 @@ export default function CampaignDetail({ campaignId, onNavigate, showToast }: Ca
 
     showToast(data?.message || 'Resend complete', 'success')
     loadCampaign()
+  }
+
+  const duplicateCampaign = async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      showToast('Not authenticated', 'error')
+      return
+    }
+
+    const res = await fetch('/api/campaigns/duplicate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ campaignId, userId: user.id }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      showToast(data?.error || 'Failed to duplicate campaign', 'error')
+      return
+    }
+    showToast(data?.message || 'Campaign duplicated', 'success')
+    onNavigate('campaigns')
   }
 
   const deleteCampaign = async () => {
@@ -186,6 +248,12 @@ export default function CampaignDetail({ campaignId, onNavigate, showToast }: Ca
                 ▶ Send Now
               </button>
             )}
+            <button
+              className="btn-bmail btn-bmail-outline text-sm"
+              onClick={duplicateCampaign}
+            >
+              ⧉ Duplicate
+            </button>
             {campaign.failed > 0 && (
               <button
                 className="btn-bmail btn-bmail-outline text-sm"
@@ -263,7 +331,10 @@ export default function CampaignDetail({ campaignId, onNavigate, showToast }: Ca
               <tbody>
                 {contacts.map(c => (
                   <tr key={c.id}>
-                    <td className="font-medium">{c.email}</td>
+                    <td>
+                      <div className="font-medium">{c.display_name || c.display_email || 'Unknown recipient'}</div>
+                      <div className="text-xs text-[var(--muted)]">{c.display_email || '—'}</div>
+                    </td>
                     <td>{statusPill(c.status)}</td>
                     <td className="text-[var(--muted)] text-xs">
                       {c.sent_at ? new Date(c.sent_at).toLocaleString() : '—'}

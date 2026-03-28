@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { createClient, getCurrentUserSafe } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts'
@@ -34,9 +34,7 @@ export default function DashboardPage() {
     const fetchData = async () => {
       try {
         // Get current user
-        const {
-          data: { user },
-        } = await supabase.auth.getUser()
+        const user = await getCurrentUserSafe(supabase, 10000)
 
         if (!user) return
 
@@ -82,7 +80,7 @@ export default function DashboardPage() {
     }
 
     fetchData()
-  }, [supabase])
+  }, [])
 
   const totalSent = campaigns.reduce((sum, c) => sum + (c.sent_count || 0), 0)
   const totalOpened = campaigns.reduce((sum, c) => sum + (c.opened_count || 0), 0)

@@ -29,17 +29,19 @@ export async function GET(request: Request) {
             return NextResponse.json({ message: 'No campaigns to process' })
         }
 
-        // 3. Trigger enqueue for each campaign
-        // We call the internal enqueue API or just logic directly. 
-        // Calling internal API is cleaner but requires full URL.
+        // 3. Start each scheduled campaign in smart paced mode (not blast).
         const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
 
         const results = await Promise.all(
             campaigns.map(async (c) => {
-                const res = await fetch(`${baseUrl}/api/campaigns/enqueue`, {
+                const res = await fetch(`${baseUrl}/api/campaigns/send`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ campaignId: c.id, userId: c.user_id })
+                    body: JSON.stringify({
+                      campaignId: c.id,
+                      userId: c.user_id,
+                      maxRecipients: 5
+                    })
                 })
                 return { id: c.id, status: res.status }
             })

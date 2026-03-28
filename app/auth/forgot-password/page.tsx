@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -19,6 +19,12 @@ export default function ForgotPasswordPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('error') === 'link_expired') {
+      setError('Your reset link has expired. Please request a new one.')
+    }
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -28,7 +34,7 @@ export default function ForgotPasswordPage() {
 
     try {
       const supabase = createClient()
-      const redirectTo = `${window.location.origin}/auth/reset-password`
+      const redirectTo = `${window.location.origin}/auth/callback?next=/auth/reset-password`
 
       await supabase.auth.resetPasswordForEmail(email, { redirectTo })
 
