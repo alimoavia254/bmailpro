@@ -1,10 +1,31 @@
 import { testSmtpConnection } from '@/lib/email'
 import { resolveStoredSecret } from '@/lib/encryption'
+import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(req: NextRequest) {
   try {
-    const { smtpEmail, smtpPassword } = await req.json()
+    const supabase = await createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+
+    let body: { smtpEmail?: string; smtpPassword?: string }
+    try {
+      body = await req.json()
+    } catch {
+      return NextResponse.json(
+        { success: false, error: 'Invalid JSON body' },
+        { status: 400 }
+      )
+    }
+    const { smtpEmail, smtpPassword } = body
 
     if (!smtpEmail || !smtpPassword) {
       return NextResponse.json(

@@ -22,6 +22,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { MessageCircle, X } from 'lucide-react'
 import { getDeliveryPresetFromStorage } from '@/lib/delivery-speed'
+import { parseShellSearch, replaceShellUrl } from '@/lib/app-shell-url'
 
 type Page = 'dashboard' | 'campaigns' | 'contacts' | 'new' | 'templates' | 'settings' | 'detail' | 'upgrade' | 'admin-dashboard' | 'admin-users' | 'admin-payments' | 'admin-settings' | 'admin-activity'
 
@@ -40,10 +41,7 @@ export default function AppShell({ user, profile }: AppShellProps) {
   const isNewUser = !hasSmtp && typeof window !== 'undefined' &&
     sessionStorage.getItem('bmail:new_user') === '1'
 
-  // Default to admin-dashboard if user is admin, settings if new user, otherwise dashboard
-  const [currentPage, setCurrentPage] = useState<Page>(
-    profile?.is_admin ? 'admin-dashboard' : isNewUser ? 'settings' : 'dashboard'
-  )
+  const [currentPage, setCurrentPage] = useState<Page>('dashboard')
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null)
   const [smtpStatus, setSmtpStatus] = useState<'ok' | 'fail' | 'warn'>('warn')
   const [trackingUrl, setTrackingUrl] = useState<string>(() => process.env.NEXT_PUBLIC_URL || (typeof window !== 'undefined' ? window.location.origin : ''))
@@ -126,31 +124,70 @@ export default function AppShell({ user, profile }: AppShellProps) {
     checkSmtpStatus()
   }, [checkSmtpStatus])
 
-  // Set up real-time subscriptions for tracking events
+  // Restore view from ?view=&cid= so refresh stays on the same screen.
   useEffect(() => {
-    const channel = supabase
-      .channel('tracking-events')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'tracking_events',
-        },
-        (payload: any) => {
-          const event = payload.new
-          const icon = event.event_type === 'open' ? '👁️' : '🔗'
-          const text = event.event_type === 'open'
-            ? 'Email opened'
-            : 'Link clicked'
+    if (!user) return
+    const { view, cid } = parseShellSearch(window.location.search)
+    if (view) {
+      setCurrentPage(view as Page)
+      if (view === 'detail' && cid) setSelectedCampaignId(cid)
+      else setSelectedCampaignId(null)
+      return
+    }
+    const defaultPage: Page = profile?.is_admin ? 'admin-dashboard' : isNewUser ? 'settings' : 'dashboard'
+    setCurrentPage(defaultPage)
+    setSelectedCampaignId(null)
+    replaceShellUrl(defaultPage, null)
+  }, [user, profile?.is_admin, isNewUser])
 
-          addFeedItem(icon, text)
-        }
-      )
-      .subscribe()
+  useEffect(() => {
+    const onPop = () => {
+      if (!user) return
+      const { view, cid } = parseShellSearch(window.location.search)
+      if (view) {
+        setCurrentPage(view as Page)
+        if (view === 'detail' && cid) setSelectedCampaignId(cid)
+        else setSelectedCampaignId(null)
+      }
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [user, profile?.is_admin])
+
+  // Live activity feed: INSERT on tracking_events (RLS limits to this user's campaigns).
+  useEffect(() => {
+    let channel: ReturnType<typeof supabase.channel> | null = null
+
+    const setup = async () => {
+      const {
+        data: { user: authUser },
+      } = await supabase.auth.getUser()
+      if (!authUser) return
+
+      channel = supabase
+        .channel(`tracking-events-${authUser.id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'tracking_events',
+          },
+          (payload: { new: { event_type?: string } }) => {
+            const event = payload.new
+            const icon = event.event_type === 'open' ? '👁️' : '🔗'
+            const text =
+              event.event_type === 'open' ? 'Email opened' : 'Link clicked'
+            addFeedItem(icon, text)
+          }
+        )
+        .subscribe()
+    }
+
+    void setup()
 
     return () => {
-      supabase.removeChannel(channel)
+      if (channel) void supabase.removeChannel(channel)
     }
   }, [supabase])
 
@@ -167,8 +204,12 @@ export default function AppShell({ user, profile }: AppShellProps) {
   const navigate = (page: Page, campaignId?: string) => {
     setCurrentPage(page)
     setSidebarOpen(false)
-    if (campaignId) {
+    if (page === 'detail' && campaignId) {
       setSelectedCampaignId(campaignId)
+      replaceShellUrl('detail', campaignId)
+    } else {
+      setSelectedCampaignId(null)
+      replaceShellUrl(page, null)
     }
   }
 
@@ -246,6 +287,7 @@ export default function AppShell({ user, profile }: AppShellProps) {
         const campaign = sendingCampaigns[0]
         await fetch('/api/campaigns/send', {
           method: 'POST',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             campaignId: campaign.id,

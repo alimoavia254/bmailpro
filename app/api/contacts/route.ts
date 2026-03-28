@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { sanitizeIlikeSearchTerm } from '@/lib/sanitize-ilike'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(request: NextRequest) {
@@ -11,9 +12,12 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url)
-    const limit = parseInt(searchParams.get('limit') || '50')
-    const offset = parseInt(searchParams.get('offset') || '0')
-    const search = searchParams.get('search')
+    const limitRaw = parseInt(searchParams.get('limit') || '50', 10)
+    const offsetRaw = parseInt(searchParams.get('offset') || '0', 10)
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 500) : 50
+    const offset = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? offsetRaw : 0
+    const searchRaw = searchParams.get('search')
+    const search = searchRaw ? sanitizeIlikeSearchTerm(searchRaw, 200) : ''
 
     let query = supabase
       .from('contacts')
@@ -21,7 +25,7 @@ export async function GET(request: NextRequest) {
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
 
-    if (search) {
+    if (search.length > 0) {
       query = query.or(`email.ilike.%${search}%,name.ilike.%${search}%`)
     }
 

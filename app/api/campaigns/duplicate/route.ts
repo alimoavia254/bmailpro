@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createClient as createServerClient } from '@/lib/supabase/server'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -8,16 +9,30 @@ const supabaseAdmin = createClient(
 
 export async function POST(request: NextRequest) {
   try {
-    const { campaignId, userId } = await request.json()
-    if (!campaignId || !userId) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+    const supabaseAuth = await createServerClient()
+    const {
+      data: { user },
+    } = await supabaseAuth.auth.getUser()
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    let body: { campaignId?: string }
+    try {
+      body = await request.json()
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+    }
+    const { campaignId } = body
+    if (!campaignId) {
+      return NextResponse.json({ error: 'Missing campaign id' }, { status: 400 })
     }
 
     const { data: sourceCampaign, error: campaignError } = await supabaseAdmin
       .from('campaigns')
       .select('*')
       .eq('id', campaignId)
-      .eq('user_id', userId)
+      .eq('user_id', user.id)
       .single()
 
     if (campaignError || !sourceCampaign) {
@@ -39,7 +54,7 @@ export async function POST(request: NextRequest) {
     const { data: newCampaign, error: insertError } = await supabaseAdmin
       .from('campaigns')
       .insert({
-        user_id: userId,
+        user_id: user.id,
         name: duplicatedName,
         subject: sourceCampaign.subject,
         body_html: sourceCampaign.body_html || sourceCampaign.body || '',
@@ -63,7 +78,7 @@ export async function POST(request: NextRequest) {
         campaign_id: newCampaign.id,
         contact_id: c.contact_id,
         status: 'pending',
-        tracking_id: crypto.randomUUID().slice(0, 14),
+        tracking_id: crypto.randomUUID(),
       }))
 
       const { error: linkError } = await supabaseAdmin
@@ -94,7 +109,7 @@ export async function POST(request: NextRequest) {
     }
 
     await supabaseAdmin.from('activity_logs').insert({
-      user_id: userId,
+      user_id: user.id,
       action: 'campaign_duplicated',
       details: {
         source_campaign_id: campaignId,

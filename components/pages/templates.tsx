@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { useConfirm } from '@/components/ui/confirm-modal'
 
 interface TemplatesProps {
   showToast: (msg: string, type?: any) => void
@@ -18,6 +19,7 @@ interface Template {
 export default function Templates({ showToast }: TemplatesProps) {
   const [templates, setTemplates] = useState<Template[]>([])
   const [loading, setLoading] = useState(true)
+  const { confirm, modal: confirmModal } = useConfirm()
   const [showModal, setShowModal] = useState(false)
   const [editTemplate, setEditTemplate] = useState<Template | null>(null)
   const [formName, setFormName] = useState('')
@@ -106,8 +108,9 @@ export default function Templates({ showToast }: TemplatesProps) {
     setTemplates([newTemplate, ...templates])
   }
 
-  const deleteTemplate = (id: string) => {
-    if (!confirm('Delete this template?')) return
+  const deleteTemplate = async (id: string) => {
+    const ok = await confirm({ title: 'Delete Template', message: 'Delete this template? This cannot be undone.', confirmLabel: 'Delete', variant: 'danger' })
+    if (!ok) return
     setTemplates(templates.filter(t => t.id !== id))
     showToast('🗑 Template deleted')
   }
@@ -122,6 +125,7 @@ export default function Templates({ showToast }: TemplatesProps) {
 
   return (
     <>
+      {confirmModal}
       <div className="bmail-card">
         <div className="bmail-card-head">
           <div className="bmail-card-title">Email Templates</div>

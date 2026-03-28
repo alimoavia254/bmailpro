@@ -30,13 +30,20 @@ export async function GET(request: Request) {
         }
 
         // 3. Start each scheduled campaign in smart paced mode (not blast).
-        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+        const baseUrl =
+            process.env.NEXT_PUBLIC_APP_URL ||
+            process.env.NEXT_PUBLIC_URL ||
+            (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '') ||
+            'http://localhost:3000'
 
         const results = await Promise.all(
             campaigns.map(async (c) => {
-                const res = await fetch(`${baseUrl}/api/campaigns/send`, {
+                const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/campaigns/send`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${process.env.CRON_SECRET}`,
+                    },
                     body: JSON.stringify({
                       campaignId: c.id,
                       userId: c.user_id,

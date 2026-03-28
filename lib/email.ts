@@ -259,9 +259,21 @@ export function generateUnsubscribeToken(email: string): string {
 }
 
 /**
- * Verifies an unsubscribe token.
+ * Verifies an unsubscribe token (constant-time; avoids timingSafeEqual length throws).
  */
 export function verifyUnsubscribeToken(email: string, token: string): boolean {
-  const expected = generateUnsubscribeToken(email)
-  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(token))
+  try {
+    if (!email || !token) return false
+    const normalized = token.trim().toLowerCase()
+    const expected = generateUnsubscribeToken(email)
+    if (!/^[0-9a-f]+$/.test(normalized) || expected.length !== normalized.length) {
+      return false
+    }
+    const a = Buffer.from(expected, 'hex')
+    const b = Buffer.from(normalized, 'hex')
+    if (a.length !== b.length) return false
+    return crypto.timingSafeEqual(a, b)
+  } catch {
+    return false
+  }
 }

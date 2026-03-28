@@ -574,3 +574,7 @@ CREATE TABLE IF NOT EXISTS public.campaign_variants (
 
 -- Add variant_id to campaign_contacts to track which recipient got which version
 ALTER TABLE public.campaign_contacts ADD COLUMN IF NOT EXISTS variant_id UUID REFERENCES public.campaign_variants(id) ON DELETE SET NULL;
+
+-- Per-open event counts (each pixel load increments open_count; campaigns.total_open_events sums all opens)
+ALTER TABLE public.campaign_contacts ADD COLUMN IF NOT EXISTS open_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE public.campaigns ADD COLUMN IF NOT EXISTS total_open_events INTEGER NOT NULL DEFAULT 0;

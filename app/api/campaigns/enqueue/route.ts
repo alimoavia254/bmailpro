@@ -1,7 +1,8 @@
 // app/api/campaigns/enqueue/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient as createSupabaseAdmin } from '@supabase/supabase-js'
-import { campaignQueue } from '@/lib/queue'
+import { createClient } from '@/lib/supabase/server'
+import { getCampaignQueue } from '@/lib/queue'
 
 const supabaseAdmin = createSupabaseAdmin(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -10,10 +11,28 @@ const supabaseAdmin = createSupabaseAdmin(
 
 export async function POST(request: NextRequest) {
     try {
-        const { campaignId, userId } = await request.json()
+        const supabaseAuth = await createClient()
+        const {
+            data: { user },
+        } = await supabaseAuth.auth.getUser()
+        if (!user) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+        }
+
+        let body: { campaignId?: string; userId?: string }
+        try {
+            body = await request.json()
+        } catch {
+            return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+        }
+        const { campaignId, userId } = body
 
         if (!campaignId || !userId) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+        }
+
+        if (user.id !== userId) {
+            return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
         }
 
         // 1. Get Recipients (skip unsubscribed)
@@ -48,7 +67,7 @@ export async function POST(request: NextRequest) {
             },
         }))
 
-        await campaignQueue.addBulk(jobs)
+        await getCampaignQueue().addBulk(jobs)
 
         return NextResponse.json({
             success: true,

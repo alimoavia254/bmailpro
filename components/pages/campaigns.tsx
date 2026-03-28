@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useEffect, type ReactElement } from 'react'
+import { useState, useEffect, useCallback, type ReactElement } from 'react'
 import { createClient, getCurrentUserSafe } from '@/lib/supabase/client'
 import { getDeliveryPresetFromStorage } from '@/lib/delivery-speed'
+import { useConfirm } from '@/components/ui/confirm-modal'
 
 interface CampaignsProps {
   onNavigate: (page: any, id?: string) => void
@@ -12,13 +13,10 @@ interface CampaignsProps {
 export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
   const [campaigns, setCampaigns] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const { confirm, modal } = useConfirm()
   const supabase = createClient()
 
-  useEffect(() => {
-    loadCampaigns()
-  }, [])
-
-  const loadCampaigns = async () => {
+  const loadCampaigns = useCallback(async () => {
     try {
       const user = await getCurrentUserSafe(supabase, 10000)
       if (!user) {
@@ -81,10 +79,59 @@ export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [supabase])
+
+  useEffect(() => {
+    let debounce: ReturnType<typeof setTimeout> | null = null
+    const bump = () => {
+      if (debounce) clearTimeout(debounce)
+      debounce = setTimeout(() => {
+        debounce = null
+        void loadCampaigns()
+      }, 300)
+    }
+
+    let channel: ReturnType<typeof supabase.channel> | null = null
+    let pollId = 0
+
+    const init = async () => {
+      await loadCampaigns()
+      const user = await getCurrentUserSafe(supabase, 10000)
+      if (!user) return
+
+      channel = supabase
+        .channel(`campaigns-list-rt-${user.id}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'campaigns', filter: `user_id=eq.${user.id}` },
+          bump
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'campaign_contacts' },
+          bump
+        )
+        .subscribe((status) => {
+          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') bump()
+        })
+
+      pollId = window.setInterval(() => {
+        if (document.visibilityState === 'visible') void loadCampaigns()
+      }, 9000)
+    }
+
+    void init()
+
+    return () => {
+      if (debounce) clearTimeout(debounce)
+      if (channel) void supabase.removeChannel(channel)
+      if (pollId) window.clearInterval(pollId)
+    }
+  }, [supabase, loadCampaigns])
 
   const sendCampaign = async (id: string) => {
-    if (!confirm('Send this campaign now? This cannot be undone.')) return
+    const ok = await confirm({ title: 'Send Campaign', message: 'Send this campaign now? This cannot be undone.', confirmLabel: 'Send Now', variant: 'success' })
+    if (!ok) return
 
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
@@ -95,6 +142,7 @@ export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
     const preset = getDeliveryPresetFromStorage()
     const res = await fetch('/api/campaigns/send', {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ campaignId: id, userId: user.id, maxRecipients: preset.batchSize }),
     })
@@ -114,7 +162,8 @@ export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
   }
 
   const deleteCampaign = async (id: string) => {
-    if (!confirm('Delete this campaign and all its data?')) return
+    const ok = await confirm({ title: 'Delete Campaign', message: 'Delete this campaign and all its data? This cannot be undone.', confirmLabel: 'Delete', variant: 'danger' })
+    if (!ok) return
     
     await supabase.from('campaign_contacts').delete().eq('campaign_id', id)
     await supabase.from('campaigns').delete().eq('id', id)
@@ -133,7 +182,7 @@ export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
     const res = await fetch('/api/campaigns/duplicate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ campaignId: id, userId: user.id }),
+      body: JSON.stringify({ campaignId: id }),
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
@@ -164,6 +213,8 @@ export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
   }
 
   return (
+    <>
+    {modal}
     <div className="bmail-card">
       <div className="bmail-card-head">
         <div className="bmail-card-title">📧 All Campaigns</div>
@@ -263,5 +314,6 @@ export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
         )}
       </div>
     </div>
+    </>
   )
 }

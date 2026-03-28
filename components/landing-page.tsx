@@ -110,6 +110,7 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
   const [plans, setPlans] = useState<Plan[]>([])
   const [freeLimit, setFreeLimit] = useState(5)
   const [plansLoading, setPlansLoading] = useState(true)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   useEffect(() => {
     const supabase = createClient()
@@ -144,6 +145,68 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
 
   return (
     <div style={{ fontFamily: 'var(--font-dm-sans), system-ui, sans-serif', overflowX: 'hidden' }}>
+      <style>{`
+        /* ── Responsive utilities ─────────────────────────── */
+        .lp-nav-links { display: flex; align-items: center; gap: 2rem; }
+        .lp-nav-hamburger { display: none; background: transparent; border: none; cursor: pointer; padding: 6px; color: rgba(255,255,255,0.7); }
+        .lp-mobile-menu { display: none; }
+        .lp-hero-cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+        .lp-stats-bar { display: grid; grid-template-columns: repeat(4, 1fr); width: 100%; }
+        .lp-stats-item { padding: clamp(1rem,3vw,1.5rem) clamp(1rem,3vw,2.5rem); text-align: center; border-right: 1px solid rgba(255,255,255,0.06); }
+        .lp-stats-item:last-child { border-right: none; }
+        .lp-footer-inner { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; }
+        .lp-features-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(310px,100%), 1fr)); gap: clamp(1rem,2vw,1.5rem); }
+        .lp-steps-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px,100%), 1fr)); gap: clamp(2rem,4vw,3rem); }
+        .lp-plans-grid { display: grid; gap: 1.25rem; align-items: start; }
+        .lp-free-strip { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; }
+        .lp-payment-badges { display: flex; align-items: center; justify-content: center; gap: 1.5rem; flex-wrap: wrap; }
+
+        @media (max-width: 768px) {
+          .lp-nav-links { display: none; }
+          .lp-nav-hamburger { display: flex; align-items: center; justify-content: center; }
+          .lp-mobile-menu.open {
+            display: flex; flex-direction: column; gap: 0;
+            position: fixed; top: 64px; left: 0; right: 0; z-index: 99;
+            background: rgba(14,14,22,0.98); backdrop-filter: blur(16px);
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            padding: 0.5rem 0 1rem;
+          }
+          .lp-mobile-menu.open a {
+            display: block; padding: 0.875rem 1.5rem;
+            color: rgba(255,255,255,0.7); font-size: 1rem;
+            font-weight: 500; text-decoration: none;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+          }
+          .lp-mobile-menu.open .lp-mobile-menu-btns {
+            display: flex; gap: 0.75rem; padding: 1rem 1.5rem 0;
+          }
+          .lp-hero-cta { flex-direction: column; align-items: stretch; width: 100%; max-width: 360px; margin: 0 auto; }
+          .lp-hero-cta button { width: 100%; justify-content: center; }
+          .lp-stats-bar { grid-template-columns: repeat(2, 1fr); }
+          .lp-stats-item { border-right: 1px solid rgba(255,255,255,0.06) !important; border-bottom: 1px solid rgba(255,255,255,0.06); }
+          .lp-stats-item:nth-child(2n) { border-right: none !important; }
+          .lp-stats-item:nth-last-child(-n+2) { border-bottom: none; }
+          .lp-footer-inner { flex-direction: column; align-items: center; text-align: center; }
+          .lp-free-strip { flex-direction: column; align-items: flex-start; }
+          .lp-free-strip-actions { width: 100%; }
+          .lp-free-strip-actions button { width: 100%; }
+        }
+
+        @media (max-width: 480px) {
+          .lp-stats-bar { grid-template-columns: repeat(2, 1fr); }
+          .lp-payment-badges { gap: 1rem; }
+        }
+
+        @media (min-width: 769px) {
+          .lp-mobile-menu { display: none !important; }
+        }
+
+        /* Hover states */
+        .lp-nav-link:hover { color: rgba(255,255,255,0.9) !important; }
+        .lp-feature-card:hover { transform: translateY(-2px); box-shadow: 0 6px 28px rgba(0,0,0,0.08) !important; transition: transform 0.2s, box-shadow 0.2s; }
+        .lp-cta-primary:hover { opacity: 0.92; transform: translateY(-1px); transition: opacity 0.15s, transform 0.15s; }
+        .lp-cta-secondary:hover { background: rgba(255,255,255,0.09) !important; transition: background 0.15s; }
+      `}</style>
 
       {/* ─── NAVBAR ─────────────────────────────────────── */}
       <nav style={{
@@ -176,15 +239,17 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
           </span>
         </div>
 
-        {/* Center links — hidden on small screens via visibility trick */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '2rem' }}>
+        {/* Center links — desktop */}
+        <div className="lp-nav-links">
           {['Features', 'How it works', 'Pricing'].map((label) => (
             <a
               key={label}
               href={`#${label.toLowerCase().replace(/\s+/g, '-')}`}
+              className="lp-nav-link"
+              onClick={() => setMobileMenuOpen(false)}
               style={{
                 color: 'rgba(255,255,255,0.55)', fontSize: '0.875rem', fontWeight: 500,
-                textDecoration: 'none', letterSpacing: '0.01em', minHeight: 'auto', minWidth: 'auto',
+                textDecoration: 'none', letterSpacing: '0.01em',
               }}
             >
               {label}
@@ -192,34 +257,89 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
           ))}
         </div>
 
-        {/* Buttons */}
+        {/* Right side: buttons (desktop) + hamburger (mobile) */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div className="lp-nav-links" style={{ gap: 10 }}>
+            <button
+              onClick={onSignIn}
+              style={{
+                padding: '8px 20px', borderRadius: 8,
+                border: '1px solid rgba(255,255,255,0.12)',
+                background: 'transparent', color: 'rgba(255,255,255,0.75)',
+                fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer',
+                letterSpacing: '0.01em',
+              }}
+            >
+              Sign In
+            </button>
+            <button
+              onClick={onGetStarted}
+              style={{
+                padding: '8px 20px', borderRadius: 8, border: 'none',
+                background: '#7c5cfc', color: '#fff',
+                fontSize: '0.8125rem', fontWeight: 700, cursor: 'pointer',
+                boxShadow: '0 0 0 1px rgba(124,92,252,0.5), 0 2px 8px rgba(124,92,252,0.3)',
+                letterSpacing: '0.01em',
+              }}
+            >
+              Get Started
+            </button>
+          </div>
+
+          {/* Hamburger */}
           <button
-            onClick={onSignIn}
+            className="lp-nav-hamburger"
+            onClick={() => setMobileMenuOpen((v) => !v)}
+            aria-label="Toggle menu"
+          >
+            {mobileMenuOpen ? (
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 6L6 18M6 6l12 12"/>
+              </svg>
+            ) : (
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 12h18M3 6h18M3 18h18"/>
+              </svg>
+            )}
+          </button>
+        </div>
+      </nav>
+
+      {/* Mobile menu */}
+      <div className={`lp-mobile-menu${mobileMenuOpen ? ' open' : ''}`}>
+        {['Features', 'How it works', 'Pricing'].map((label) => (
+          <a
+            key={label}
+            href={`#${label.toLowerCase().replace(/\s+/g, '-')}`}
+            onClick={() => setMobileMenuOpen(false)}
+          >
+            {label}
+          </a>
+        ))}
+        <div className="lp-mobile-menu-btns">
+          <button
+            onClick={() => { setMobileMenuOpen(false); onSignIn() }}
             style={{
-              padding: '8px 20px', borderRadius: 8,
+              flex: 1, padding: '10px', borderRadius: 8,
               border: '1px solid rgba(255,255,255,0.12)',
               background: 'transparent', color: 'rgba(255,255,255,0.75)',
-              fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer',
-              minHeight: 'auto', minWidth: 'auto', letterSpacing: '0.01em',
+              fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer',
             }}
           >
             Sign In
           </button>
           <button
-            onClick={onGetStarted}
+            onClick={() => { setMobileMenuOpen(false); onGetStarted() }}
             style={{
-              padding: '8px 20px', borderRadius: 8, border: 'none',
+              flex: 1, padding: '10px', borderRadius: 8, border: 'none',
               background: '#7c5cfc', color: '#fff',
-              fontSize: '0.8125rem', fontWeight: 700, cursor: 'pointer',
-              boxShadow: '0 0 0 1px rgba(124,92,252,0.5), 0 2px 8px rgba(124,92,252,0.3)',
-              minHeight: 'auto', minWidth: 'auto', letterSpacing: '0.01em',
+              fontSize: '0.875rem', fontWeight: 700, cursor: 'pointer',
             }}
           >
             Get Started
           </button>
         </div>
-      </nav>
+      </div>
 
       {/* ─── HERO ────────────────────────────────────────── */}
       <section style={{
@@ -246,7 +366,7 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
           backgroundSize: '36px 36px',
         }} />
 
-        <div style={{ position: 'relative', zIndex: 1, maxWidth: 740 }}>
+        <div style={{ position: 'relative', zIndex: 1, maxWidth: 740, width: '100%' }}>
           {/* Badge */}
           <div style={{
             display: 'inline-flex', alignItems: 'center', gap: 8,
@@ -272,7 +392,7 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
           <h1 style={{
             fontFamily: 'var(--font-syne), Syne, sans-serif',
             fontWeight: 800, color: '#fff',
-            fontSize: 'clamp(2.75rem, 8vw, 5rem)',
+            fontSize: 'clamp(2.5rem, 8vw, 5rem)',
             lineHeight: 1.02, letterSpacing: '-0.04em',
             marginBottom: '1.5rem',
           }}>
@@ -285,7 +405,7 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
 
           {/* Subheadline */}
           <p style={{
-            fontSize: 'clamp(1.0625rem, 2.5vw, 1.3125rem)',
+            fontSize: 'clamp(1rem, 2.5vw, 1.3125rem)',
             color: 'rgba(255,255,255,0.45)',
             lineHeight: 1.7,
             maxWidth: 540, margin: '0 auto 2.75rem',
@@ -294,16 +414,17 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
           </p>
 
           {/* CTA */}
-          <div style={{ display: 'flex', gap: 14, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <div className="lp-hero-cta">
             <button
               onClick={onGetStarted}
+              className="lp-cta-primary"
               style={{
                 padding: '15px 36px', borderRadius: 12, border: 'none',
                 background: 'linear-gradient(135deg, #7c5cfc 0%, #5b21b6 100%)',
                 color: '#fff', fontSize: '1rem', fontWeight: 700, cursor: 'pointer',
                 boxShadow: '0 8px 40px rgba(124,92,252,0.45)',
                 display: 'flex', alignItems: 'center', gap: 8,
-                minHeight: 'auto', minWidth: 'auto', letterSpacing: '-0.01em',
+                letterSpacing: '-0.01em',
               }}
             >
               Get Started Free
@@ -313,13 +434,13 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
             </button>
             <button
               onClick={onSignIn}
+              className="lp-cta-secondary"
               style={{
                 padding: '15px 36px', borderRadius: 12,
                 border: '1px solid rgba(255,255,255,0.12)',
                 background: 'rgba(255,255,255,0.05)',
                 color: 'rgba(255,255,255,0.8)', fontSize: '1rem', fontWeight: 600,
                 cursor: 'pointer', backdropFilter: 'blur(8px)',
-                minHeight: 'auto', minWidth: 'auto',
               }}
             >
               Sign In
@@ -335,10 +456,9 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
         </div>
 
         {/* Stats bar */}
-        <div style={{
+        <div className="lp-stats-bar" style={{
           position: 'absolute', bottom: 0, left: 0, right: 0,
           borderTop: '1px solid rgba(255,255,255,0.06)',
-          display: 'flex', justifyContent: 'center', flexWrap: 'wrap',
           zIndex: 1,
         }}>
           {[
@@ -346,15 +466,11 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
             { n: '2M+', l: 'Emails Tracked' },
             { n: '45%', l: 'Avg. Open Rate' },
             { n: '10k+', l: 'Happy Users' },
-          ].map((s, i, arr) => (
-            <div key={i} style={{
-              padding: 'clamp(1rem, 3vw, 1.5rem) clamp(1.5rem, 5vw, 3.5rem)',
-              textAlign: 'center',
-              borderRight: i < arr.length - 1 ? '1px solid rgba(255,255,255,0.06)' : 'none',
-            }}>
+          ].map((s, i) => (
+            <div key={i} className="lp-stats-item">
               <div style={{
                 fontFamily: 'var(--font-syne), Syne, sans-serif',
-                fontSize: 'clamp(1.375rem, 4vw, 1.875rem)',
+                fontSize: 'clamp(1.25rem, 4vw, 1.875rem)',
                 fontWeight: 800, color: '#fff', lineHeight: 1.1,
               }}>{s.n}</div>
               <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.35)', fontWeight: 500, marginTop: 4 }}>{s.l}</div>
@@ -391,13 +507,9 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
           </div>
 
           {/* Grid */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))',
-            gap: 'clamp(1rem, 2vw, 1.5rem)',
-          }}>
+          <div className="lp-features-grid">
             {features.map((f, i) => (
-              <div key={i} style={{
+              <div key={i} className="lp-feature-card" style={{
                 background: '#ffffff',
                 borderRadius: 16, padding: 'clamp(1.5rem, 3vw, 2rem)',
                 border: '1px solid #e2e4f0',
@@ -450,14 +562,9 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
             }}>Up and running in minutes</h2>
           </div>
 
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-            gap: 'clamp(2rem, 4vw, 3rem)',
-          }}>
+          <div className="lp-steps-grid">
             {steps.map((step, i) => (
               <div key={i} style={{ textAlign: 'center' }}>
-                {/* Number circle */}
                 <div style={{
                   width: 60, height: 60, borderRadius: '50%',
                   background: 'rgba(124,92,252,0.12)',
@@ -477,13 +584,6 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
                 <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.9375rem', lineHeight: 1.65 }}>
                   {step.desc}
                 </p>
-
-                {/* Connector arrow (except last) */}
-                {i < steps.length - 1 && (
-                  <div style={{
-                    display: 'none', /* hidden on mobile, shown inline on larger grids */
-                  }} />
-                )}
               </div>
             ))}
           </div>
@@ -514,10 +614,9 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
           </div>
 
           {/* Free plan strip */}
-          <div style={{
+          <div className="lp-free-strip" style={{
             background: '#fff', borderRadius: 14, padding: '1.25rem 1.5rem',
             border: '1px solid #e2e4f0', marginBottom: '1.5rem',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
               <div style={{
@@ -536,7 +635,7 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
                 </div>
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div className="lp-free-strip-actions" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <span style={{
                 padding: '4px 12px', borderRadius: 100, background: '#f0edff',
                 fontSize: '0.75rem', fontWeight: 700, color: '#64748b', letterSpacing: '0.04em',
@@ -547,7 +646,7 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
                   padding: '9px 20px', borderRadius: 9,
                   border: '1.5px solid #e2e4f0', background: '#f7f8fc',
                   color: '#0e0e16', fontWeight: 700, fontSize: '0.875rem',
-                  cursor: 'pointer', minHeight: 'auto',
+                  cursor: 'pointer',
                 }}
               >
                 Get started free
@@ -557,11 +656,7 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
 
           {/* Paid plans — dynamic from DB */}
           {plansLoading ? (
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-              gap: '1.25rem',
-            }}>
+            <div className="lp-plans-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(280px,100%), 1fr))' }}>
               {[1, 2].map((i) => (
                 <div key={i} style={{
                   borderRadius: 20, height: 320,
@@ -571,12 +666,10 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
               ))}
             </div>
           ) : plans.length === 0 ? null : (
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: `repeat(auto-fill, minmax(${plans.length === 1 ? '320px' : '260px'}, 1fr))`,
-              gap: '1.25rem',
-              alignItems: 'start',
-            }}>
+            <div
+              className="lp-plans-grid"
+              style={{ gridTemplateColumns: `repeat(auto-fill, minmax(min(${plans.length === 1 ? '320px' : '260px'}, 100%), 1fr))` }}
+            >
               {plans.map((plan, index) => {
                 const isBestValue = plans.length >= 2 && index === 0
                 const isPopular = plans.length >= 2 && index === plans.length - 1
@@ -596,7 +689,6 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
                       : '0 2px 16px rgba(0,0,0,0.04)',
                     position: 'relative', overflow: 'hidden',
                   }}>
-                    {/* Badge banner */}
                     {isBestValue && (
                       <div style={{
                         background: '#00c9a7', color: '#fff',
@@ -612,7 +704,6 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
                       }}>MOST POPULAR — SAVE 33%</div>
                     )}
 
-                    {/* Glow for dark card */}
                     {isDark && (
                       <div style={{
                         position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)',
@@ -623,7 +714,6 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
                     )}
 
                     <div style={{ padding: '1.75rem', position: 'relative' }}>
-                      {/* Plan name + duration */}
                       <div style={{ textAlign: 'center', marginBottom: '1.25rem' }}>
                         <div style={{
                           fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.08em',
@@ -641,7 +731,6 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
                         </p>
                       </div>
 
-                      {/* Price */}
                       <div style={{ textAlign: 'center', marginBottom: '1.25rem' }}>
                         <span style={{
                           fontFamily: 'var(--font-syne), Syne, sans-serif',
@@ -654,10 +743,8 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
                         }}>one-time</span>
                       </div>
 
-                      {/* Divider */}
                       <div style={{ height: 1, background: isDark ? 'rgba(255,255,255,0.08)' : '#e2e4f0', margin: '1.25rem 0' }} />
 
-                      {/* Features */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem', marginBottom: '1.5rem' }}>
                         {(plan.features || []).map((f, i) => (
                           <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
@@ -675,7 +762,6 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
                         ))}
                       </div>
 
-                      {/* CTA */}
                       <button
                         onClick={onGetStarted}
                         style={{
@@ -693,7 +779,6 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
                             ? '0 4px 20px rgba(124,92,252,0.4)'
                             : 'none',
                           outline: (!isBestValue && !isDark) ? '1.5px solid #e2e4f0' : 'none',
-                          minHeight: 'auto',
                         }}
                       >
                         Get {plan.display_name}
@@ -706,10 +791,7 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
           )}
 
           {/* Payment note */}
-          <div style={{
-            marginTop: '1.5rem', textAlign: 'center',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.5rem', flexWrap: 'wrap',
-          }}>
+          <div className="lp-payment-badges" style={{ marginTop: '1.5rem' }}>
             {[
               { icon: '🔒', text: 'Secure Payments' },
               { icon: '⚡', text: '24hr Activation' },
@@ -755,13 +837,14 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
           </p>
           <button
             onClick={onGetStarted}
+            className="lp-cta-primary"
             style={{
               padding: '16px 44px', borderRadius: 12, border: 'none',
               background: 'linear-gradient(135deg, #7c5cfc 0%, #5b21b6 100%)',
               color: '#fff', fontSize: '1.0625rem', fontWeight: 700,
               cursor: 'pointer', boxShadow: '0 8px 40px rgba(124,92,252,0.5)',
               display: 'inline-flex', alignItems: 'center', gap: 10,
-              minHeight: 'auto', minWidth: 'auto', letterSpacing: '-0.01em',
+              letterSpacing: '-0.01em',
             }}
           >
             Get Started Free
@@ -777,43 +860,43 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
         background: '#0e0e16',
         borderTop: '1px solid rgba(255,255,255,0.06)',
         padding: 'clamp(1.75rem, 4vw, 2.5rem) clamp(1.25rem, 5vw, 3rem)',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        flexWrap: 'wrap', gap: '1rem',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{
-            width: 30, height: 30, borderRadius: 7,
-            background: 'linear-gradient(135deg, #7c5cfc, #00c9a7)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#fff',
-          }}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="2" y="4" width="20" height="16" rx="2"/>
-              <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
-            </svg>
+        <div className="lp-footer-inner">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{
+              width: 30, height: 30, borderRadius: 7,
+              background: 'linear-gradient(135deg, #7c5cfc, #00c9a7)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#fff',
+            }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="4" width="20" height="16" rx="2"/>
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+              </svg>
+            </div>
+            <span style={{
+              fontFamily: 'var(--font-syne), Syne, sans-serif',
+              fontWeight: 800, fontSize: '0.9375rem', color: '#fff',
+            }}>Bmail<span style={{ color: '#7c5cfc' }}>Pro</span></span>
           </div>
-          <span style={{
-            fontFamily: 'var(--font-syne), Syne, sans-serif',
-            fontWeight: 800, fontSize: '0.9375rem', color: '#fff',
-          }}>Bmail<span style={{ color: '#7c5cfc' }}>Pro</span></span>
-        </div>
 
-        <div style={{ fontSize: '0.8125rem', color: 'rgba(255,255,255,0.22)' }}>
-          © {new Date().getFullYear()} BmailPro. All rights reserved.
-        </div>
+          <div style={{ fontSize: '0.8125rem', color: 'rgba(255,255,255,0.22)' }}>
+            © {new Date().getFullYear()} BmailPro. All rights reserved.
+          </div>
 
-        <div style={{ display: 'flex', gap: '1.5rem' }}>
-          {['Privacy', 'Terms', 'Contact'].map((link) => (
-            <span
-              key={link}
-              style={{
-                fontSize: '0.8125rem', color: 'rgba(255,255,255,0.32)',
-                cursor: 'pointer', fontWeight: 500, minHeight: 'auto', minWidth: 'auto',
-              }}
-            >
-              {link}
-            </span>
-          ))}
+          <div style={{ display: 'flex', gap: '1.5rem' }}>
+            {['Privacy', 'Terms', 'Contact'].map((link) => (
+              <span
+                key={link}
+                style={{
+                  fontSize: '0.8125rem', color: 'rgba(255,255,255,0.32)',
+                  cursor: 'pointer', fontWeight: 500,
+                }}
+              >
+                {link}
+              </span>
+            ))}
+          </div>
         </div>
       </footer>
     </div>

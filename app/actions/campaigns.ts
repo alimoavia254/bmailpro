@@ -1,5 +1,6 @@
 'use server'
 
+import { headers } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 import * as Sentry from "@sentry/nextjs";
 import { v4 as uuidv4 } from 'uuid'
@@ -351,10 +352,13 @@ export async function sendCampaign(campaignId: string) {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
 
   try {
+    const reqHeaders = await headers()
+    const cookie = reqHeaders.get('cookie')
     const response = await fetch(`${baseUrl}/api/campaigns/enqueue`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(cookie ? { Cookie: cookie } : {}),
       },
       body: JSON.stringify({
         campaignId,

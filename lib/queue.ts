@@ -1,31 +1,43 @@
-// lib/queue.ts
+// lib/queue.ts — lazy init so importing this module never opens Redis during Next.js build.
 import { Queue } from 'bullmq'
+import type { ConnectionOptions } from 'bullmq'
 import IORedis from 'ioredis'
 
-const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL?.replace('https://', 'rediss://').replace('rest-', '')
-// Note: BullMQ needs the Redis protocol, not REST. 
-// If using Upstash, you'll need the redis:// or rediss:// URL.
-// Assuming UPSTASH_REDIS_URL is provided for BullMQ.
-const redisUrl = process.env.UPSTASH_REDIS_URL || 'redis://localhost:6379'
+function getRedisUrl(): string {
+  return process.env.UPSTASH_REDIS_URL || 'redis://127.0.0.1:6379'
+}
 
-export const connection = new IORedis(redisUrl, {
-    maxRetriesPerRequest: null,
-})
+let _connection: IORedis | undefined
+let _campaignQueue: Queue | undefined
 
-export const campaignQueue = new Queue('campaign-send', {
-    connection: connection as any,
-    defaultJobOptions: {
+export function getQueueConnection(): IORedis {
+  if (!_connection) {
+    _connection = new IORedis(getRedisUrl(), {
+      maxRetriesPerRequest: null,
+    })
+  }
+  return _connection
+}
+
+export function getCampaignQueue(): Queue {
+  if (!_campaignQueue) {
+    _campaignQueue = new Queue('campaign-send', {
+      connection: getQueueConnection() as ConnectionOptions,
+      defaultJobOptions: {
         attempts: 3,
         backoff: {
-            type: 'exponential',
-            delay: 2000,
+          type: 'exponential',
+          delay: 2000,
         },
         removeOnComplete: true,
-    },
-})
+      },
+    })
+  }
+  return _campaignQueue
+}
 
 export interface CampaignJobData {
-    campaignId: string
-    userId: string
-    recipientId: string // campaign_contact.id
+  campaignId: string
+  userId: string
+  recipientId: string
 }

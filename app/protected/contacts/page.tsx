@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Plus, Trash2, Upload } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useConfirm } from '@/components/ui/confirm-modal'
 
 interface Contact {
   id: string
@@ -28,6 +29,7 @@ export default function ContactsPage() {
   const supabase = createClient()
   const [contacts, setContacts] = useState<Contact[]>([])
   const [loading, setLoading] = useState(true)
+  const { confirm, modal } = useConfirm()
   const [newContact, setNewContact] = useState({ email: '', name: '' })
   const [bulkEmails, setBulkEmails] = useState('')
   const [tags, setTags] = useState<Tag[]>([])
@@ -141,13 +143,13 @@ export default function ContactsPage() {
   }
 
   const handleDelete = async (contactId: string) => {
-    if (confirm('Are you sure you want to delete this contact?')) {
-      try {
-        await supabase.from('contacts').delete().eq('id', contactId)
-        setContacts(contacts.filter((c) => c.id !== contactId))
-      } catch (error) {
-        console.error('Error deleting contact:', error)
-      }
+    const ok = await confirm({ title: 'Delete Contact', message: 'Are you sure you want to delete this contact?', confirmLabel: 'Delete', variant: 'danger' })
+    if (!ok) return
+    try {
+      await supabase.from('contacts').delete().eq('id', contactId)
+      setContacts(contacts.filter((c) => c.id !== contactId))
+    } catch (error) {
+      console.error('Error deleting contact:', error)
     }
   }
 
@@ -156,6 +158,8 @@ export default function ContactsPage() {
   }
 
   return (
+    <>
+    {modal}
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">Contacts</h1>
@@ -309,7 +313,8 @@ export default function ContactsPage() {
                   <div key={tag.id} className="flex items-center gap-2 bg-blue-100 dark:bg-blue-900/30 px-3 py-1 rounded-full text-sm">
                     <span style={{ color: tag.color }}>{tag.name}</span>
                     <button onClick={async () => {
-                      if (confirm(`Delete tag "${tag.name}"?`)) {
+                      const ok = await confirm({ title: 'Delete Tag', message: `Delete the tag "${tag.name}"?`, confirmLabel: 'Delete', variant: 'danger' })
+                      if (ok) {
                         await supabase.from('tags').delete().eq('id', tag.id)
                         setTags(tags.filter(t => t.id !== tag.id))
                       }
@@ -424,5 +429,6 @@ export default function ContactsPage() {
         </CardContent>
       </Card>
     </div>
+    </>
   )
 }

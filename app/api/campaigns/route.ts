@@ -11,8 +11,10 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url)
-    const limit = parseInt(searchParams.get('limit') || '10')
-    const offset = parseInt(searchParams.get('offset') || '0')
+    const limitRaw = parseInt(searchParams.get('limit') || '10', 10)
+    const offsetRaw = parseInt(searchParams.get('offset') || '0', 10)
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 100) : 10
+    const offset = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? offsetRaw : 0
     const status = searchParams.get('status')
 
     let query = supabase

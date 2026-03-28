@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Plus, Trash2, Eye } from 'lucide-react'
+import { useConfirm } from '@/components/ui/confirm-modal'
 
 interface Campaign {
   id: string
@@ -24,6 +25,7 @@ export default function CampaignsPage() {
   const supabase = createClient()
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [loading, setLoading] = useState(true)
+  const { confirm, modal } = useConfirm()
 
   useEffect(() => {
     const fetchCampaigns = async () => {
@@ -52,13 +54,13 @@ export default function CampaignsPage() {
   }, [])
 
   const handleDelete = async (campaignId: string) => {
-    if (confirm('Are you sure you want to delete this campaign?')) {
-      try {
-        await supabase.from('campaigns').delete().eq('id', campaignId)
-        setCampaigns(campaigns.filter((c) => c.id !== campaignId))
-      } catch (error) {
-        console.error('Error deleting campaign:', error)
-      }
+    const ok = await confirm({ title: 'Delete Campaign', message: 'Delete this campaign and all its data? This cannot be undone.', confirmLabel: 'Delete', variant: 'danger' })
+    if (!ok) return
+    try {
+      await supabase.from('campaigns').delete().eq('id', campaignId)
+      setCampaigns(campaigns.filter((c) => c.id !== campaignId))
+    } catch (error) {
+      console.error('Error deleting campaign:', error)
     }
   }
 
@@ -80,6 +82,8 @@ export default function CampaignsPage() {
   }
 
   return (
+    <>
+    {modal}
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
@@ -162,5 +166,6 @@ export default function CampaignsPage() {
         </div>
       )}
     </div>
+    </>
   )
 }

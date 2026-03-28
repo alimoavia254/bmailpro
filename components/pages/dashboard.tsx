@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { createClient, getCurrentUserSafe } from '@/lib/supabase/client'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 
@@ -26,6 +26,7 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
     totalCampaigns: 0,
     totalSent: 0,
     totalOpened: 0,
+    totalOpenEvents: 0,
     totalClicked: 0,
     openRate: 0,
     clickRate: 0,
@@ -43,11 +44,7 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
     return Promise.race([promise, timeout]) as Promise<T>
   }
 
-  useEffect(() => {
-    loadDashboard()
-  }, [])
-
-  const loadDashboard = async () => {
+  const loadDashboard = useCallback(async () => {
     setLoading(true)
     setLoadError(null)
 
@@ -58,6 +55,7 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
           totalCampaigns: 0,
           totalSent: 0,
           totalOpened: 0,
+          totalOpenEvents: 0,
           totalClicked: 0,
           openRate: 0,
           clickRate: 0,
@@ -84,7 +82,7 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
         const contactsQueryResult = await withTimeout(
           supabase
             .from('campaign_contacts')
-            .select('campaign_id,status,opened_at,clicked_at,sent_at')
+            .select('campaign_id,status,opened_at,clicked_at,sent_at,open_count')
             .in('campaign_id', campaignIds),
           10000
         ) as any
@@ -94,13 +92,17 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
       }
 
       const totalSent = contactsData?.filter((c: any) => c.status === 'sent' || c.status === 'opened' || c.status === 'clicked').length || 0
-      const totalOpened = contactsData?.filter((c: any) => c.opened_at).length || 0
+      const totalOpenEvents =
+        contactsData?.reduce((s: number, c: any) => s + (typeof c.open_count === 'number' ? c.open_count : 0), 0) || 0
+      const totalOpened =
+        contactsData?.filter((c: any) => (c.open_count ?? 0) > 0 || c.opened_at).length || 0
       const totalClicked = contactsData?.filter((c: any) => c.clicked_at).length || 0
 
       setStats({
         totalCampaigns: campaignsData?.length || 0,
         totalSent,
         totalOpened,
+        totalOpenEvents,
         totalClicked,
         openRate: totalSent > 0 ? Math.round((totalOpened / totalSent) * 100 * 10) / 10 : 0,
         clickRate: totalSent > 0 ? Math.round((totalClicked / totalSent) * 100 * 10) / 10 : 0,
@@ -110,7 +112,7 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
       const processedCampaigns = (campaignsData || []).map((camp: any) => {
         const campContacts = contactsData.filter((c: any) => c.campaign_id === camp.id) || []
         const sent = campContacts.filter((c: any) => ['sent', 'opened', 'clicked'].includes(c.status)).length
-        const opened = campContacts.filter((c: any) => c.opened_at).length
+        const opened = campContacts.filter((c: any) => (c.open_count ?? 0) > 0 || c.opened_at).length
         const clicked = campContacts.filter((c: any) => c.clicked_at).length
         return {
           ...camp,
@@ -147,6 +149,7 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
         totalCampaigns: 0,
         totalSent: 0,
         totalOpened: 0,
+        totalOpenEvents: 0,
         totalClicked: 0,
         openRate: 0,
         clickRate: 0,
@@ -156,7 +159,55 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
     } finally {
       setLoading(false)
     }
-  }
+  }, [supabase])
+
+  useEffect(() => {
+    let debounce: ReturnType<typeof setTimeout> | null = null
+    const bump = () => {
+      if (debounce) clearTimeout(debounce)
+      debounce = setTimeout(() => {
+        debounce = null
+        void loadDashboard()
+      }, 350)
+    }
+
+    let channel: ReturnType<typeof supabase.channel> | null = null
+    let pollId = 0
+
+    const setup = async () => {
+      await loadDashboard()
+      const user = await getCurrentUserSafe(supabase, 10000)
+      if (!user) return
+
+      channel = supabase
+        .channel(`dashboard-rt-${user.id}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'campaigns', filter: `user_id=eq.${user.id}` },
+          bump
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'campaign_contacts' },
+          bump
+        )
+        .subscribe((status) => {
+          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') bump()
+        })
+
+      pollId = window.setInterval(() => {
+        if (document.visibilityState === 'visible') void loadDashboard()
+      }, 10000)
+    }
+
+    void setup()
+
+    return () => {
+      if (debounce) clearTimeout(debounce)
+      if (channel) void supabase.removeChannel(channel)
+      if (pollId) window.clearInterval(pollId)
+    }
+  }, [supabase, loadDashboard])
 
   const pieData = [
     { name: 'Opened', value: stats.totalOpened, color: 'var(--accent2)' },
@@ -198,9 +249,11 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
           <div className="stat-sub">Emails sent</div>
         </div>
         <div className="stat-card">
-          <div className="stat-label">👁️ Opened</div>
-          <div className="stat-val text-[var(--accent2)]">{stats.totalOpened}</div>
-          <div className="stat-sub">{stats.openRate}% open rate</div>
+          <div className="stat-label">👁️ Opens</div>
+          <div className="stat-val text-[var(--accent2)]">{stats.totalOpenEvents}</div>
+          <div className="stat-sub">
+            {stats.totalOpened} unique · {stats.openRate}% rate
+          </div>
         </div>
         <div className="stat-card">
           <div className="stat-label">🔗 Clicked</div>

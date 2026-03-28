@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import type { Transporter } from 'nodemailer'
 import {
   createTransporter,
   createOAuthTransporter,
@@ -10,11 +11,21 @@ import {
 } from '@/lib/email'
 import { refreshAccessToken } from '@/lib/google-oauth'
 import { resolveStoredSecret } from '@/lib/encryption'
+import { assertCampaignSendAuthorized } from '@/lib/api-auth'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
+
+/** Nodemailer + Gmail need the Node runtime (not Edge). */
+export const runtime = 'nodejs'
+
+/**
+ * Vercel kills functions after ~10s by default on Hobby; SMTP often needs longer.
+ * Plan caps still apply (e.g. Hobby max 60s unless upgraded).
+ */
+export const maxDuration = 300
 
 function getAppBaseUrl(request: NextRequest): string {
   const explicit =
@@ -42,9 +53,23 @@ function getAppBaseUrl(request: NextRequest): string {
 export async function POST(request: NextRequest) {
   let campaignIdForRecovery: string | null = null
   let didMarkCampaignSending = false
+  let transporter: Transporter | undefined
+
   try {
-    const { campaignId, userId, includeFailed, maxRecipients } = await request.json()
-    campaignIdForRecovery = campaignId
+    let body: {
+      campaignId?: string
+      userId?: string
+      includeFailed?: boolean
+      maxRecipients?: unknown
+    }
+    try {
+      body = await request.json()
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+    }
+
+    const { campaignId, userId, includeFailed, maxRecipients } = body
+    campaignIdForRecovery = campaignId ?? null
     const maxBatchSize =
       Number.isFinite(Number(maxRecipients)) && Number(maxRecipients) > 0
         ? Math.floor(Number(maxRecipients))
@@ -52,6 +77,11 @@ export async function POST(request: NextRequest) {
 
     if (!campaignId || !userId) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+    }
+
+    const auth = await assertCampaignSendAuthorized(request, userId)
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status })
     }
 
     // Get user profile with SMTP settings
@@ -197,7 +227,6 @@ export async function POST(request: NextRequest) {
     const googleTokenExpiry =
       activeSlot === 2 ? profile.google_token_expiry_2 : profile.google_token_expiry_1
 
-    let transporter
     if (googleRefreshToken && smtpEmail) {
       // OAuth2 flow — refresh token if expired
       let accessToken = googleAccessToken
@@ -239,7 +268,18 @@ export async function POST(request: NextRequest) {
 
     const baseUrl = getAppBaseUrl(request)
 
-    // Mark campaign as sending
+    const closeTransport = () => {
+      try {
+        transporter?.close()
+      } catch {
+        /* ignore */
+      }
+    }
+
+    // Mark campaign as sending.
+    // Drip/cron batches arrive with maxBatchSize set and the campaign is already
+    // 'sending' — that is intentional and must be allowed.
+    // Double-click prevention is handled on the client (isSending guard).
     await supabaseAdmin
       .from('campaigns')
       .update({ status: 'sending' })
@@ -315,19 +355,31 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Close the connection pool
-    transporter.close()
+    closeTransport()
 
-    // ── Update campaign stats ──────────────────────────────────────────────
-    const { count: pendingCountRaw } = await supabaseAdmin
-      .from('campaign_contacts')
-      .select('id', { count: 'exact', head: true })
-      .eq('campaign_id', campaignId)
-      .eq('status', 'pending')
+    // ── Update campaign stats (fresh DB counts — avoids stale-read race) ────
+    const [{ count: pendingCountRaw }, { count: dbSentCountRaw }, { count: dbFailedCountRaw }] =
+      await Promise.all([
+        supabaseAdmin
+          .from('campaign_contacts')
+          .select('id', { count: 'exact', head: true })
+          .eq('campaign_id', campaignId)
+          .eq('status', 'pending'),
+        supabaseAdmin
+          .from('campaign_contacts')
+          .select('id', { count: 'exact', head: true })
+          .eq('campaign_id', campaignId)
+          .in('status', ['sent', 'opened', 'clicked']),
+        supabaseAdmin
+          .from('campaign_contacts')
+          .select('id', { count: 'exact', head: true })
+          .eq('campaign_id', campaignId)
+          .eq('status', 'failed'),
+      ])
+
     const pendingCount = pendingCountRaw ?? 0
-
-    const totalSentCount = (campaign.sent_count || 0) + sentCount
-    const totalFailedCount = (campaign.failed_count || 0) + failedCount
+    const totalSentCount = dbSentCountRaw ?? 0
+    const totalFailedCount = dbFailedCountRaw ?? 0
     const newStatus = pendingCount > 0 ? 'sending' : totalSentCount > 0 ? 'sent' : 'failed'
     const { error: finalizeError } = await supabaseAdmin
       .from('campaigns')
@@ -381,6 +433,11 @@ export async function POST(request: NextRequest) {
         }`,
     })
   } catch (error) {
+    try {
+      transporter?.close()
+    } catch {
+      /* ignore */
+    }
     console.error('Campaign send error:', error)
     // If we already switched campaign to "sending", never leave it stuck there.
     if (campaignIdForRecovery && didMarkCampaignSending) {

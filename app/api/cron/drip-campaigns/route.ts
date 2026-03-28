@@ -36,11 +36,14 @@ export async function GET(request: Request) {
       campaigns.map(async (campaign) => {
         const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/campaigns/send`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${process.env.CRON_SECRET}`,
+          },
           body: JSON.stringify({
             campaignId: campaign.id,
             userId: campaign.user_id,
-              maxRecipients: 5,
+            maxRecipients: 5,
           }),
         })
         const payload = await res.json().catch(() => ({}))

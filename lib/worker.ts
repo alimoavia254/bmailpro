@@ -1,6 +1,6 @@
 // lib/worker.ts
 import { Worker, Job } from 'bullmq'
-import { connection, CampaignJobData } from './queue'
+import { getQueueConnection, CampaignJobData } from './queue'
 import { createClient as createSupabaseAdmin } from '@supabase/supabase-js'
 import { createTransporter, sendEmail, injectTracking, injectUnsubscribeLink, generateUnsubscribeToken } from './email'
 import { resolveStoredSecret } from './encryption'
@@ -116,7 +116,7 @@ const worker = new Worker<CampaignJobData>(
         }
     },
     {
-        connection: connection as any,
+        connection: getQueueConnection() as import('bullmq').ConnectionOptions,
         concurrency: 5, // 5 parallel emails as requested
     }
 )

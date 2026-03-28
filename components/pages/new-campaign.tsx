@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { createClient, getCurrentUserSafe } from '@/lib/supabase/client'
 import { MessageCircle } from 'lucide-react'
 import { getDeliveryPresetFromStorage } from '@/lib/delivery-speed'
+import { useConfirm } from '@/components/ui/confirm-modal'
 
 interface NewCampaignProps {
   onNavigate: (page: any, id?: string) => void
@@ -41,6 +42,7 @@ export default function NewCampaign({ onNavigate, showToast, profile, onShowUpgr
   const [selectedSavedEmails, setSelectedSavedEmails] = useState<Record<string, boolean>>({})
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
   const [showLimitWarning, setShowLimitWarning] = useState(false)
+  const { confirm, modal: confirmModal } = useConfirm()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
 
@@ -358,7 +360,8 @@ export default function NewCampaign({ onNavigate, showToast, profile, onShowUpgr
 
     showToast(`Campaign created with ${linkedRecipients} recipient(s)`)
     
-    if (confirm(`Campaign "${name}" created with ${linkedRecipients} recipient(s).\n\nSend now?`)) {
+    const sendNow = await confirm({ title: 'Campaign Created!', message: `"${name}" is ready with ${linkedRecipients} recipient(s). Send it now?`, confirmLabel: 'Send Now', cancelLabel: 'Later', variant: 'success' })
+    if (sendNow) {
       const preset = getDeliveryPresetFromStorage()
       const sendResponse = await fetch('/api/campaigns/send', {
         method: 'POST',
@@ -383,6 +386,8 @@ export default function NewCampaign({ onNavigate, showToast, profile, onShowUpgr
   const recipientCount = getAllContacts().length
 
   return (
+    <>
+    {confirmModal}
     <div className="two-col">
       {/* Left Column - Campaign Details */}
       <div>
@@ -682,5 +687,6 @@ export default function NewCampaign({ onNavigate, showToast, profile, onShowUpgr
         </div>
       )}
     </div>
+    </>
   )
 }

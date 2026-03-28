@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { sanitizeIlikeSearchTerm } from '@/lib/sanitize-ilike'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -41,7 +42,8 @@ export async function GET(request: NextRequest) {
   }
 
   const { searchParams } = new URL(request.url)
-  const search = searchParams.get('search') || ''
+  const searchRaw = searchParams.get('search') || ''
+  const search = searchRaw ? sanitizeIlikeSearchTerm(searchRaw, 200) : ''
   const status = searchParams.get('status') || ''
 
   let query = supabaseAdmin
@@ -49,7 +51,7 @@ export async function GET(request: NextRequest) {
     .select('*')
     .order('created_at', { ascending: false })
 
-  if (search) {
+  if (search.length > 0) {
     query = query.or(`email.ilike.%${search}%,full_name.ilike.%${search}%`)
   }
 
