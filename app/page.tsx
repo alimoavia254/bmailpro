@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { AuthChangeEvent, Session } from '@supabase/supabase-js'
 import { createClient, getCurrentUserSafe } from '@/lib/supabase/client'
 import AuthScreen from '@/components/auth-screen'
+import LandingPage from '@/components/landing-page'
 import AppShell from '@/components/app-shell'
 
 const ADMIN_EMAIL = 'alimoavia80@gmail.com'
@@ -34,6 +35,7 @@ async function fetchProfile(
 export default function HomePage() {
   const [user, setUser] = useState<any>(null)
   const [profile, setProfile] = useState<any>(null)
+  const [showAuth, setShowAuth] = useState(false)
   // Start loading:true — resolved exactly once via the auth state listener below
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
@@ -198,7 +200,15 @@ export default function HomePage() {
   }
 
   if (!user) {
-    return <AuthScreen />
+    if (!showAuth) {
+      return (
+        <LandingPage
+          onGetStarted={() => setShowAuth(true)}
+          onSignIn={() => setShowAuth(true)}
+        />
+      )
+    }
+    return <AuthScreen onBack={() => setShowAuth(false)} />
   }
 
   return <AppShell user={user} profile={profile} />
