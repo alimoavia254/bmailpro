@@ -39,17 +39,19 @@ export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
       const processedCampaigns = (campaignsData || []).map((camp: any) => {
         const campContacts = contactsData?.filter((c: any) => c.campaign_id === camp.id) || []
         const sent = campContacts.filter((c: any) => ['sent', 'opened', 'clicked'].includes(c.status)).length
-        const opened = campContacts.filter((c: any) => c.opened_at).length
+        const opened = campContacts.filter(
+          (c: any) => (c.open_count ?? 0) > 0 || c.opened_at
+        ).length
         const clicked = campContacts.filter((c: any) => c.clicked_at).length
         const failed = campContacts.filter((c: any) => c.status === 'failed').length
         const pending = campContacts.filter((c: any) => c.status === 'pending').length
         const derivedStatus =
-          camp.status === 'sending' && pending === 0
+          camp.status === 'sending' && pending === 0 && campContacts.length > 0
             ? sent > 0
               ? 'sent'
               : failed > 0
                 ? 'failed'
-                : camp.status
+                : 'draft'
             : camp.status
         return {
           ...camp,
@@ -117,7 +119,7 @@ export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
 
       pollId = window.setInterval(() => {
         if (document.visibilityState === 'visible') void loadCampaigns()
-      }, 9000)
+      }, 4000)
     }
 
     void init()

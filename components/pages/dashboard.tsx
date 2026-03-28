@@ -114,8 +114,20 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
         const sent = campContacts.filter((c: any) => ['sent', 'opened', 'clicked'].includes(c.status)).length
         const opened = campContacts.filter((c: any) => (c.open_count ?? 0) > 0 || c.opened_at).length
         const clicked = campContacts.filter((c: any) => c.clicked_at).length
+        const failed = campContacts.filter((c: any) => c.status === 'failed').length
+        const pending = campContacts.filter((c: any) => c.status === 'pending').length
+        const derivedStatus =
+          camp.status === 'sending' && pending === 0 && campContacts.length > 0
+            ? sent > 0
+              ? 'sent'
+              : failed > 0
+                ? 'failed'
+                : 'draft'
+            : camp.status
         return {
           ...camp,
+          status_original: camp.status,
+          status: derivedStatus,
           total: campContacts.length,
           sent,
           opened,
@@ -124,6 +136,12 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
           click_rate: sent > 0 ? Math.round((clicked / sent) * 100 * 10) / 10 : 0,
         }
       })
+
+      for (const c of processedCampaigns) {
+        if (c.status !== c.status_original) {
+          void supabase.from('campaigns').update({ status: c.status }).eq('id', c.id)
+        }
+      }
 
       setCampaigns(processedCampaigns.slice(0, 5))
 
@@ -197,7 +215,7 @@ export default function Dashboard({ feedItems, onNavigate, showToast }: Dashboar
 
       pollId = window.setInterval(() => {
         if (document.visibilityState === 'visible') void loadDashboard()
-      }, 10000)
+      }, 5000)
     }
 
     void setup()

@@ -154,15 +154,65 @@ export default function AppShell({ user, profile }: AppShellProps) {
     return () => window.removeEventListener('popstate', onPop)
   }, [user, profile?.is_admin])
 
-  // Live activity feed: INSERT on tracking_events (RLS limits to this user's campaigns).
+  // Live feed: load recent opens/clicks, merge Realtime INSERTs, and poll so UI updates without manual refresh.
   useEffect(() => {
+    let pollTimer: number | null = null
     let channel: ReturnType<typeof supabase.channel> | null = null
+    let cancelled = false
+
+    type TeRow = { id: string; event_type: string; created_at: string }
+
+    const mapRow = (r: TeRow) => ({
+      id: `ev-${r.id}`,
+      eventId: r.id,
+      icon: r.event_type === 'open' ? '👁️' : '🔗',
+      text: r.event_type === 'open' ? 'Email opened' : 'Link clicked',
+      time: new Date(r.created_at).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      }),
+      at: r.created_at,
+    })
+
+    const mergeRows = (rows: TeRow[], replace: boolean) => {
+      if (cancelled || rows.length === 0) return
+      setFeedItems((prev) => {
+        const base = replace ? [] : [...prev]
+        const seen = new Set(
+          base.map((p: { eventId?: string }) => p.eventId).filter(Boolean) as string[]
+        )
+        const additions = rows.filter((r) => r.id && !seen.has(r.id)).map(mapRow)
+        const merged = [...additions, ...base] as typeof base
+        merged.sort(
+          (a: { at: string }, b: { at: string }) =>
+            new Date(b.at).getTime() - new Date(a.at).getTime()
+        )
+        return merged.slice(0, 50)
+      })
+    }
+
+    const fetchRecent = async () => {
+      const { data } = await supabase
+        .from('tracking_events')
+        .select('id, event_type, created_at')
+        .order('created_at', { ascending: false })
+        .limit(30)
+      if (data?.length) mergeRows(data as TeRow[], false)
+    }
 
     const setup = async () => {
       const {
         data: { user: authUser },
       } = await supabase.auth.getUser()
-      if (!authUser) return
+      if (!authUser || cancelled) return
+
+      const { data: recent } = await supabase
+        .from('tracking_events')
+        .select('id, event_type, created_at')
+        .order('created_at', { ascending: false })
+        .limit(40)
+      if (recent?.length) mergeRows(recent as TeRow[], true)
 
       channel = supabase
         .channel(`tracking-events-${authUser.id}`)
@@ -173,33 +223,38 @@ export default function AppShell({ user, profile }: AppShellProps) {
             schema: 'public',
             table: 'tracking_events',
           },
-          (payload: { new: { event_type?: string } }) => {
-            const event = payload.new
-            const icon = event.event_type === 'open' ? '👁️' : '🔗'
-            const text =
-              event.event_type === 'open' ? 'Email opened' : 'Link clicked'
-            addFeedItem(icon, text)
+          (payload: { new: Partial<TeRow> }) => {
+            const n = payload.new
+            if (!n?.id || !n.created_at) return
+            mergeRows(
+              [
+                {
+                  id: n.id,
+                  event_type: n.event_type || 'open',
+                  created_at: n.created_at,
+                },
+              ],
+              false
+            )
           }
         )
-        .subscribe()
+        .subscribe((status) => {
+          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') void fetchRecent()
+        })
+
+      pollTimer = window.setInterval(() => {
+        if (document.visibilityState === 'visible') void fetchRecent()
+      }, 5000)
     }
 
     void setup()
 
     return () => {
+      cancelled = true
+      if (pollTimer) window.clearInterval(pollTimer)
       if (channel) void supabase.removeChannel(channel)
     }
   }, [supabase])
-
-  const addFeedItem = (icon: string, text: string) => {
-    const newItem = {
-      id: Date.now(),
-      icon,
-      text,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-    }
-    setFeedItems(prev => [newItem, ...prev].slice(0, 50))
-  }
 
   const navigate = (page: Page, campaignId?: string) => {
     setCurrentPage(page)
@@ -303,7 +358,7 @@ export default function AppShell({ user, profile }: AppShellProps) {
     void runDripTick()
     const timer = window.setInterval(() => {
       void runDripTick()
-    }, 10_000)
+    }, 5_000)
 
     return () => {
       active = false

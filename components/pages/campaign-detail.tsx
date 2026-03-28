@@ -74,7 +74,7 @@ export default function CampaignDetail({ campaignId, onNavigate, showToast }: Ca
       // Fixes campaigns stuck in 'sending' that the API may not have finalized.
       let derivedStatus = campaignData.status
       if (campaignData.status === 'sending' && pending === 0 && normalizedContacts.length > 0) {
-        derivedStatus = sent > 0 ? 'sent' : failed > 0 ? 'failed' : 'sent'
+        derivedStatus = sent > 0 ? 'sent' : failed > 0 ? 'failed' : 'draft'
       }
       // If DB already reflects a final state, trust it
       if (['sent', 'failed', 'draft'].includes(campaignData.status)) {
@@ -161,7 +161,7 @@ export default function CampaignDetail({ campaignId, onNavigate, showToast }: Ca
         }
       })
 
-    const pollMs = 7000
+    const pollMs = 4000
     const poll = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
         void loadCampaign(true)

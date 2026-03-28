@@ -18,6 +18,54 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+/** Recompute campaign row from campaign_contacts (fixes drip idle + stuck "sending"). */
+async function syncCampaignProgressFromContacts(campaignId: string): Promise<{
+  pendingCount: number
+  totalSentCount: number
+  totalFailedCount: number
+  newStatus: string
+}> {
+  const [{ count: pendingCountRaw }, { count: dbSentCountRaw }, { count: dbFailedCountRaw }] =
+    await Promise.all([
+      supabaseAdmin
+        .from('campaign_contacts')
+        .select('id', { count: 'exact', head: true })
+        .eq('campaign_id', campaignId)
+        .eq('status', 'pending'),
+      supabaseAdmin
+        .from('campaign_contacts')
+        .select('id', { count: 'exact', head: true })
+        .eq('campaign_id', campaignId)
+        .in('status', ['sent', 'opened', 'clicked']),
+      supabaseAdmin
+        .from('campaign_contacts')
+        .select('id', { count: 'exact', head: true })
+        .eq('campaign_id', campaignId)
+        .eq('status', 'failed'),
+    ])
+
+  const pendingCount = pendingCountRaw ?? 0
+  const totalSentCount = dbSentCountRaw ?? 0
+  const totalFailedCount = dbFailedCountRaw ?? 0
+  const newStatus =
+    pendingCount > 0 ? 'sending' : totalSentCount > 0 ? 'sent' : totalFailedCount > 0 ? 'failed' : 'draft'
+
+  const { error } = await supabaseAdmin
+    .from('campaigns')
+    .update({
+      status: newStatus,
+      sent_count: totalSentCount,
+      failed_count: totalFailedCount,
+    })
+    .eq('id', campaignId)
+
+  if (error) {
+    console.error('syncCampaignProgressFromContacts:', error)
+  }
+
+  return { pendingCount, totalSentCount, totalFailedCount, newStatus }
+}
+
 /** Nodemailer + Gmail need the Node runtime (not Edge). */
 export const runtime = 'nodejs'
 
@@ -195,6 +243,27 @@ export async function POST(request: NextRequest) {
     }
 
     if (!recipients || recipients.length === 0) {
+      // Drip: next tick often has zero eligible rows while campaign is still "sending".
+      // Without this, status never flips to "sent" and the UI stays stuck.
+      if (campaign.status === 'sending') {
+        const r = await syncCampaignProgressFromContacts(campaignId)
+        return NextResponse.json({
+          success: true,
+          sent: 0,
+          failed: 0,
+          pending: r.pendingCount,
+          batchSize: 0,
+          mode: maxBatchSize ? 'drip' : 'bulk',
+          reconciled: true,
+          status: r.newStatus,
+          message:
+            r.newStatus === 'sent'
+              ? 'All emails delivered.'
+              : r.pendingCount > 0
+                ? 'No eligible recipients in this batch (e.g. remaining may be unsubscribed).'
+                : 'Campaign status synced.',
+        })
+      }
       return NextResponse.json({ error: 'No recipients available for sending' }, { status: 400 })
     }
     const recipientsToProcess = maxBatchSize ? recipients.slice(0, maxBatchSize) : recipients
@@ -358,40 +427,7 @@ export async function POST(request: NextRequest) {
     closeTransport()
 
     // ── Update campaign stats (fresh DB counts — avoids stale-read race) ────
-    const [{ count: pendingCountRaw }, { count: dbSentCountRaw }, { count: dbFailedCountRaw }] =
-      await Promise.all([
-        supabaseAdmin
-          .from('campaign_contacts')
-          .select('id', { count: 'exact', head: true })
-          .eq('campaign_id', campaignId)
-          .eq('status', 'pending'),
-        supabaseAdmin
-          .from('campaign_contacts')
-          .select('id', { count: 'exact', head: true })
-          .eq('campaign_id', campaignId)
-          .in('status', ['sent', 'opened', 'clicked']),
-        supabaseAdmin
-          .from('campaign_contacts')
-          .select('id', { count: 'exact', head: true })
-          .eq('campaign_id', campaignId)
-          .eq('status', 'failed'),
-      ])
-
-    const pendingCount = pendingCountRaw ?? 0
-    const totalSentCount = dbSentCountRaw ?? 0
-    const totalFailedCount = dbFailedCountRaw ?? 0
-    const newStatus = pendingCount > 0 ? 'sending' : totalSentCount > 0 ? 'sent' : 'failed'
-    const { error: finalizeError } = await supabaseAdmin
-      .from('campaigns')
-      .update({
-        status: newStatus,
-        sent_count: totalSentCount,
-        failed_count: totalFailedCount,
-      })
-      .eq('id', campaignId)
-    if (finalizeError) {
-      console.error('Failed to finalize campaign status:', finalizeError)
-    }
+    const { pendingCount } = await syncCampaignProgressFromContacts(campaignId)
 
     // ── Update user email counts ───────────────────────────────────────────
     const today = new Date().toISOString().split('T')[0]
@@ -441,11 +477,16 @@ export async function POST(request: NextRequest) {
     console.error('Campaign send error:', error)
     // If we already switched campaign to "sending", never leave it stuck there.
     if (campaignIdForRecovery && didMarkCampaignSending) {
-      await supabaseAdmin
-        .from('campaigns')
-        .update({ status: 'failed' })
-        .eq('id', campaignIdForRecovery)
-        .eq('status', 'sending')
+      try {
+        await syncCampaignProgressFromContacts(campaignIdForRecovery)
+      } catch (reconcileErr) {
+        console.error('Post-error reconcile failed:', reconcileErr)
+        await supabaseAdmin
+          .from('campaigns')
+          .update({ status: 'failed' })
+          .eq('id', campaignIdForRecovery)
+          .eq('status', 'sending')
+      }
     }
     return NextResponse.json({ error: 'Failed to send campaign' }, { status: 500 })
   }
