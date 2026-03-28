@@ -484,7 +484,6 @@ export async function POST(request: NextRequest) {
       pending: pendingCount,
       batchSize: recipientsToProcess.length,
       mode: maxBatchSize ? 'drip' : 'bulk',
-      _v: '20260328-fix2',
       message: `Successfully sent ${sentCount} email${sentCount !== 1 ? 's' : ''}${failedCount > 0 ? `, ${failedCount} failed` : ''
         }`,
     })
