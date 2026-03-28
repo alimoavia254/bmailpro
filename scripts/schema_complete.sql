@@ -578,3 +578,6 @@ ALTER TABLE public.campaign_contacts ADD COLUMN IF NOT EXISTS variant_id UUID RE
 -- Per-open event counts (each pixel load increments open_count; campaigns.total_open_events sums all opens)
 ALTER TABLE public.campaign_contacts ADD COLUMN IF NOT EXISTS open_count INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE public.campaigns ADD COLUMN IF NOT EXISTS total_open_events INTEGER NOT NULL DEFAULT 0;
+
+-- Prevent duplicate SMTP for the same row when two send workers overlap (drip + tab, etc.)
+ALTER TABLE public.campaign_contacts ADD COLUMN IF NOT EXISTS send_claim_expires_at TIMESTAMPTZ;

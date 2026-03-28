@@ -367,6 +367,18 @@ export async function POST(request: NextRequest) {
 
         if (!recipientEmail) continue
 
+        // One DB winner per row: stops duplicate SMTP if two send requests overlap (UI + drip, double tab, etc.)
+        const { data: claimed, error: claimErr } = await supabaseAdmin.rpc('claim_campaign_contact_for_send', {
+          p_contact_id: recipient.id,
+          p_ttl_seconds: 180,
+        })
+        if (!claimErr && claimed === false) {
+          continue
+        }
+        if (claimErr) {
+          console.warn('claim_campaign_contact_for_send:', claimErr.message)
+        }
+
         // Resolve the HTML body — support both 'body_html' and legacy 'body' column
         let emailBody: string = campaign.body_html || campaign.body || ''
 
@@ -395,6 +407,7 @@ export async function POST(request: NextRequest) {
               sent_at: new Date().toISOString(),
               tracking_id: trackingId,
               email: recipientEmail,
+              send_claim_expires_at: null,
             })
             .eq('id', recipient.id)
 
@@ -403,7 +416,11 @@ export async function POST(request: NextRequest) {
           console.error(`Failed to send to ${recipientEmail}:`, result.error)
           await supabaseAdmin
             .from('campaign_contacts')
-            .update({ status: 'failed', email: recipientEmail })
+            .update({
+              status: 'failed',
+              email: recipientEmail,
+              send_claim_expires_at: null,
+            })
             .eq('id', recipient.id)
 
           failedCount++
@@ -417,7 +434,7 @@ export async function POST(request: NextRequest) {
         console.error(`Unexpected error sending to recipient:`, emailError)
         await supabaseAdmin
           .from('campaign_contacts')
-          .update({ status: 'failed' })
+          .update({ status: 'failed', send_claim_expires_at: null })
           .eq('id', recipient.id)
 
         failedCount++

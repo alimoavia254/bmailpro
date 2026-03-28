@@ -45,17 +45,24 @@ const PIXEL_RESPONSE = new NextResponse(TRACKING_PIXEL, {
   },
 })
 
-/** Block immediate post-send bot prefetch; real humans usually open after this window. */
-const MIN_OPEN_DELAY_MS = 12_000
+/** Ignore pixel hits in the first moments after send (scanner prefetch). Keep low so Gmail opens still count. */
+const MIN_OPEN_DELAY_MS = 2_500
 
 const DELIVERED_STATUSES = new Set(['sent', 'opened', 'clicked'])
 
 function isLikelyAutomatedOpen(request: NextRequest): boolean {
   const userAgent = (request.headers.get('user-agent') || '').toLowerCase()
+  const accept = (request.headers.get('accept') || '').toLowerCase()
   const purpose = (request.headers.get('purpose') || request.headers.get('x-purpose') || '').toLowerCase()
   const secPurpose = (request.headers.get('sec-purpose') || '').toLowerCase()
 
-  if (purpose.includes('prefetch') || secPurpose.includes('prefetch') || secPurpose.includes('prerender')) {
+  // Gmail and other clients load tracking pixels as images; do not treat those as link prefetch.
+  const looksLikeImageRequest = accept.includes('image')
+
+  if (
+    !looksLikeImageRequest &&
+    (purpose.includes('prefetch') || secPurpose.includes('prefetch') || secPurpose.includes('prerender'))
+  ) {
     return true
   }
 

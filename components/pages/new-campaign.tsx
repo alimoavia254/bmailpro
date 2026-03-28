@@ -44,6 +44,7 @@ export default function NewCampaign({ onNavigate, showToast, profile, onShowUpgr
   const [showLimitWarning, setShowLimitWarning] = useState(false)
   const { confirm, modal: confirmModal } = useConfirm()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const createFlowLockRef = useRef(false)
   const supabase = createClient()
 
   // Fetch app settings
@@ -266,12 +267,14 @@ export default function NewCampaign({ onNavigate, showToast, profile, onShowUpgr
       return
     }
 
+    if (createFlowLockRef.current) return
+    createFlowLockRef.current = true
     setLoading(true)
-    
+
+    try {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
       showToast('Not authenticated')
-      setLoading(false)
       return
     }
 
@@ -291,7 +294,6 @@ export default function NewCampaign({ onNavigate, showToast, profile, onShowUpgr
 
     if (campError || !campaign) {
       showToast('Failed to create campaign')
-      setLoading(false)
       return
     }
 
@@ -353,7 +355,6 @@ export default function NewCampaign({ onNavigate, showToast, profile, onShowUpgr
 
     if (linkedRecipients === 0) {
       showToast('Campaign created, but no recipients were linked. Please check contacts and try again.', 'error')
-      setLoading(false)
       onNavigate('campaigns')
       return
     }
@@ -375,13 +376,20 @@ export default function NewCampaign({ onNavigate, showToast, profile, onShowUpgr
         showToast(sendData?.error || 'Campaign created, but sending failed', 'error')
       } else {
         showToast(sendData?.message || 'Campaign sent successfully', 'success')
+        try {
+          sessionStorage.setItem('bmail:user_send_guard_until', String(Date.now() + 45_000))
+        } catch {
+          /* ignore */
+        }
       }
       onNavigate('dashboard')
     } else {
       onNavigate('campaigns')
     }
-    
-    setLoading(false)
+    } finally {
+      createFlowLockRef.current = false
+      setLoading(false)
+    }
   }
 
   const recipientCount = getAllContacts().length

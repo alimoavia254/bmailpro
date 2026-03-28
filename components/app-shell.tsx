@@ -318,6 +318,12 @@ export default function AppShell({ user, profile }: AppShellProps) {
 
     const runDripTick = async () => {
       if (!active || dripBusyRef.current) return
+      try {
+        const guardUntil = Number(sessionStorage.getItem('bmail:user_send_guard_until') || 0)
+        if (guardUntil && Date.now() < guardUntil) return
+      } catch {
+        /* ignore */
+      }
       dripBusyRef.current = true
       try {
         const now = Date.now()
