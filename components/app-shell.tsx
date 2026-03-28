@@ -34,8 +34,16 @@ const IDLE_LOGOUT_MS = 30 * 60 * 1000
 const LAST_ACTIVE_KEY = 'bmail:last-active'
 
 export default function AppShell({ user, profile }: AppShellProps) {
-  // Default to admin-dashboard if user is admin, otherwise dashboard
-  const [currentPage, setCurrentPage] = useState<Page>(profile?.is_admin ? 'admin-dashboard' : 'dashboard')
+  // Detect new user: cookie moved to sessionStorage by page.tsx, or no smtp configured
+  const isNewUser = typeof window !== 'undefined' && (
+    sessionStorage.getItem('bmail:new_user') === '1' ||
+    (!profile?.smtp_email_1 && !profile?.smtp_email && !profile?.smtp_email_2)
+  )
+
+  // Default to admin-dashboard if user is admin, settings if new user, otherwise dashboard
+  const [currentPage, setCurrentPage] = useState<Page>(
+    profile?.is_admin ? 'admin-dashboard' : isNewUser ? 'settings' : 'dashboard'
+  )
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null)
   const [smtpStatus, setSmtpStatus] = useState<'ok' | 'fail' | 'warn'>('warn')
   const [trackingUrl, setTrackingUrl] = useState<string>(() => process.env.NEXT_PUBLIC_URL || (typeof window !== 'undefined' ? window.location.origin : ''))

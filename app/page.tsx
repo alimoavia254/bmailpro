@@ -61,6 +61,12 @@ export default function HomePage() {
       sessionStorage.setItem('oauth_result', window.location.search)
       window.history.replaceState({}, '', '/')
     }
+
+    // New user cookie set by /auth/callback → move to sessionStorage
+    if (document.cookie.includes('bmail_new_user=1')) {
+      sessionStorage.setItem('bmail:new_user', '1')
+      document.cookie = 'bmail_new_user=; Max-Age=0; path=/'
+    }
   }, [])
 
   useEffect(() => {

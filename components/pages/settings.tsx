@@ -596,7 +596,7 @@ export default function Settings({ profile, trackingUrl, showToast }: SettingsPr
   const [fullName, setFullName] = useState(profile?.full_name || '')
   const [savingProfile, setSavingProfile] = useState(false)
 
-  // Wizard state
+  // Wizard state — auto-open for new users who haven't configured Gmail yet
   const [wizardOpen, setWizardOpen] = useState(false)
   const [wizardSlot, setWizardSlot] = useState<1 | 2>(1)
 
@@ -604,6 +604,22 @@ export default function Settings({ profile, trackingUrl, showToast }: SettingsPr
     setWizardSlot(slot)
     setWizardOpen(true)
   }
+
+  // Welcome banner state
+  const [showWelcome, setShowWelcome] = useState(false)
+
+  // Auto-open wizard for first-time users
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const isNew = sessionStorage.getItem('bmail:new_user') === '1'
+    const noSmtp = !profile?.smtp_email_1 && !profile?.smtp_email && !profile?.smtp_email_2
+    if (isNew || noSmtp) {
+      sessionStorage.removeItem('bmail:new_user')
+      setShowWelcome(true)
+      setWizardSlot(1)
+      setWizardOpen(true)
+    }
+  }, [])
 
   // SMTP accounts
   const [accounts, setAccounts] = useState<{ [k: number]: SmtpAccount }>({
@@ -824,6 +840,25 @@ export default function Settings({ profile, trackingUrl, showToast }: SettingsPr
   }
 
   return (
+    <div>
+      {/* Welcome banner for new users */}
+      {showWelcome && (
+        <div
+          className="flex items-start gap-3 p-4 rounded-xl mb-5"
+          style={{ background: 'rgba(26,86,219,0.07)', border: '1.5px solid rgba(26,86,219,0.2)' }}
+        >
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(26,86,219,0.12)' }}>
+            <Zap className="w-4 h-4" style={{ color: 'var(--accent)' }} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-sm" style={{ color: 'var(--accent)' }}>Welcome to BmailPro! 🎉</p>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>Connect your Gmail account to start sending campaigns. The setup wizard is open below.</p>
+          </div>
+          <button onClick={() => setShowWelcome(false)} className="text-[var(--muted)] hover:text-[var(--ink)]">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
     <div className="two-col">
       {/* LEFT: Profile + SMTP */}
       <div className="space-y-5">
@@ -1136,10 +1171,12 @@ export default function Settings({ profile, trackingUrl, showToast }: SettingsPr
             [savedSlot]: { ...prev[savedSlot], email: savedEmail, verified: true },
           }))
           setWizardOpen(false)
+          setShowWelcome(false)
           showToast(`Gmail Account ${savedSlot} connected successfully!`, 'success')
         }}
         showToast={showToast}
       />
+    </div>
     </div>
   )
 }
