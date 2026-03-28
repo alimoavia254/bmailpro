@@ -109,14 +109,21 @@ export async function GET(request: NextRequest) {
       return PIXEL_RESPONSE
     }
 
-    // Only count opens after our server recorded a successful send (no "heal" — avoids false opens).
-    if (!row.sent_at || !DELIVERED_STATUSES.has(row.status)) {
+    // Require the contact to be in a delivered state (sent/opened/clicked).
+    // We intentionally do NOT require sent_at to be non-null: the DB update
+    // that sets sent_at can fail after a successful SMTP send (network/timeout),
+    // leaving sent_at=null while the contact is legitimately delivered.
+    if (!DELIVERED_STATUSES.has(row.status)) {
       return PIXEL_RESPONSE
     }
 
-    const sentAtMs = new Date(row.sent_at).getTime()
-    if (!Number.isFinite(sentAtMs) || Date.now() - sentAtMs < MIN_OPEN_DELAY_MS) {
-      return PIXEL_RESPONSE
+    // Timing guard: ignore pixel hits fired in the first moments (scanner prefetch).
+    // Use sent_at when available; otherwise skip the check (status already proves delivery).
+    if (row.sent_at) {
+      const sentAtMs = new Date(row.sent_at).getTime()
+      if (!Number.isFinite(sentAtMs) || Date.now() - sentAtMs < MIN_OPEN_DELAY_MS) {
+        return PIXEL_RESPONSE
+      }
     }
 
     const prevOpenCount = typeof row.open_count === 'number' ? row.open_count : 0
@@ -135,10 +142,13 @@ export async function GET(request: NextRequest) {
       user_agent: request.headers.get('user-agent'),
     })
 
+    // Never downgrade: keep 'clicked' if already clicked (clicked > opened in the funnel).
+    const newContactStatus = row.status === 'clicked' ? 'clicked' : 'opened'
+
     await supabaseAdmin
       .from('campaign_contacts')
       .update({
-        status: 'opened',
+        status: newContactStatus,
         open_count: prevOpenCount + 1,
         opened_at: row.opened_at ?? nowIso,
       })

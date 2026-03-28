@@ -13,6 +13,7 @@ interface CampaignsProps {
 export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
   const [campaigns, setCampaigns] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [sendingId, setSendingId] = useState<string | null>(null)
   const { confirm, modal } = useConfirm()
   const supabase = createClient()
 
@@ -132,6 +133,7 @@ export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
   }, [supabase, loadCampaigns])
 
   const sendCampaign = async (id: string) => {
+    if (sendingId) return
     const ok = await confirm({ title: 'Send Campaign', message: 'Send this campaign now? This cannot be undone.', confirmLabel: 'Send Now', variant: 'success' })
     if (!ok) return
 
@@ -141,26 +143,31 @@ export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
       return
     }
 
-    const preset = getDeliveryPresetFromStorage()
-    const res = await fetch('/api/campaigns/send', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ campaignId: id, userId: user.id, maxRecipients: preset.batchSize }),
-    })
-    const data = await res.json().catch(() => ({}))
+    setSendingId(id)
+    try {
+      const preset = getDeliveryPresetFromStorage()
+      const res = await fetch('/api/campaigns/send', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ campaignId: id, userId: user.id, maxRecipients: preset.batchSize }),
+      })
+      const data = await res.json().catch(() => ({}))
 
-    if (!res.ok) {
-      showToast(data?.error || 'Failed to send campaign', 'error')
-      return
-    }
+      if (!res.ok) {
+        showToast(data?.error || 'Failed to send campaign', 'error')
+        return
+      }
 
-    if (data?.mode === 'drip') {
-      showToast(`Campaign started. ${preset.label} mode active (~${preset.approxPerMinute}/min).`, 'success')
-    } else {
-      showToast(data?.message || 'Campaign sent', 'success')
+      if (data?.mode === 'drip') {
+        showToast(`Campaign started. ${preset.label} mode active (~${preset.approxPerMinute}/min).`, 'success')
+      } else {
+        showToast(data?.message || 'Campaign sent', 'success')
+      }
+      loadCampaigns()
+    } finally {
+      setSendingId(null)
     }
-    loadCampaigns()
   }
 
   const deleteCampaign = async (id: string) => {
@@ -280,12 +287,14 @@ export default function Campaigns({ onNavigate, showToast }: CampaignsProps) {
                         >
                           ⧉ Duplicate
                         </button>
-                        {(c.status === 'draft' || c.status === 'sending' || c.status === 'failed') && (
+                        {(c.status === 'draft' || c.status === 'failed') && (
                           <button 
                             className="btn-bmail btn-bmail-success text-xs py-1 px-2"
                             onClick={() => sendCampaign(c.id)}
+                            disabled={sendingId === c.id}
+                            style={{ opacity: sendingId === c.id ? 0.6 : 1, cursor: sendingId === c.id ? 'not-allowed' : 'pointer' }}
                           >
-                            ▶ Send
+                            {sendingId === c.id ? '⏳ Sending...' : '▶ Send'}
                           </button>
                         )}
                         <button 

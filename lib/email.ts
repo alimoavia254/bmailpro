@@ -188,12 +188,18 @@ export function injectTracking(
   // Tracking pixel — uses 'tid' parameter (must match /api/tracking/open?tid=)
   const pixel = `<img src="${appUrl}/api/tracking/open?tid=${trackingId}" width="1" height="1" style="display:none;border:0;outline:0;" alt="" />`
 
-  // Wrap all external links with click tracking — uses 'tid' parameter
-  const tracked = html.replace(
-    /href="(https?:\/\/[^"]+)"/gi,
-    (_, url) =>
-      `href="${appUrl}/api/tracking/click?tid=${trackingId}&url=${encodeURIComponent(url)}"`
-  )
+  // Wrap all external links with click tracking — handles both double and single quoted href.
+  const tracked = html
+    .replace(
+      /href="(https?:\/\/[^"]+)"/gi,
+      (_, url) =>
+        `href="${appUrl}/api/tracking/click?tid=${trackingId}&url=${encodeURIComponent(url)}"`
+    )
+    .replace(
+      /href='(https?:\/\/[^']+)'/gi,
+      (_, url) =>
+        `href="${appUrl}/api/tracking/click?tid=${trackingId}&url=${encodeURIComponent(url)}"`
+    )
 
   // Inject pixel before </body> or append at end
   if (tracked.includes('</body>')) {

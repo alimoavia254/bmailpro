@@ -320,12 +320,9 @@ export default function CampaignDetail({ campaignId, onNavigate, showToast }: Ca
     { name: 'Unopened', value: Math.max(0, campaign.sent - (campaign.opened || 0)), color: 'var(--border)' },
   ]
 
-  const canContinueSend =
-    campaign.status === 'draft' ||
-    campaign.status === 'failed' ||
-    (campaign.status === 'sending' &&
-      campaign.total > 0 &&
-      campaign.sent + campaign.failed < campaign.total)
+  // Only show manual Send for campaigns that haven't been sent yet.
+  // 'sending' campaigns are handled automatically by the drip scheduler.
+  const canContinueSend = campaign.status === 'draft' || campaign.status === 'failed'
 
   return (
     <>
@@ -363,7 +360,7 @@ export default function CampaignDetail({ campaignId, onNavigate, showToast }: Ca
               </button>
             )}
 
-            {campaign.status === 'sending' && !isSending && !canContinueSend && (
+            {campaign.status === 'sending' && (
               <span
                 style={{
                   fontSize: '0.8125rem',
@@ -384,7 +381,7 @@ export default function CampaignDetail({ campaignId, onNavigate, showToast }: Ca
                 >
                   <path d="M21 12a9 9 0 1 1-6.219-8.56" />
                 </svg>
-                Finalizing…
+                Sending in progress…
               </span>
             )}
             <button
