@@ -34,11 +34,11 @@ const IDLE_LOGOUT_MS = 30 * 60 * 1000
 const LAST_ACTIVE_KEY = 'bmail:last-active'
 
 export default function AppShell({ user, profile }: AppShellProps) {
-  // Detect new user: cookie moved to sessionStorage by page.tsx, or no smtp configured
-  const isNewUser = typeof window !== 'undefined' && (
-    sessionStorage.getItem('bmail:new_user') === '1' ||
-    (!profile?.smtp_email_1 && !profile?.smtp_email && !profile?.smtp_email_2)
-  )
+  // Only show settings for genuinely new users who haven't set up SMTP yet.
+  // If SMTP is already connected, always go to dashboard.
+  const hasSmtp = !!(profile?.smtp_email_1 || profile?.smtp_email || profile?.smtp_email_2)
+  const isNewUser = !hasSmtp && typeof window !== 'undefined' &&
+    sessionStorage.getItem('bmail:new_user') === '1'
 
   // Default to admin-dashboard if user is admin, settings if new user, otherwise dashboard
   const [currentPage, setCurrentPage] = useState<Page>(
